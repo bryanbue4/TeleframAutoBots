@@ -56,6 +56,14 @@ and gives you a private assistant bot for reports and alerts.
 5. `pip install -r requirements.txt`
 6. `python -m app.main`
 
+### Finding `DESTINATION_CHAT_ID`
+
+The channel/group ID (a `-100...` number) is awkward to find by hand. After you
+have set `CUSTOMER_BOT_TOKEN` in `.env`, added the customer bot as admin of your
+channel, and posted a message there, run the helper: double-click `get_id.bat`
+(or `python get_id.py`). It prints every chat the bot can see with its ID -
+copy your channel's number into `DESTINATION_CHAT_ID`.
+
 ## Data collected
 
 Per member: Telegram user ID, name, city, join/approval status, message count,
