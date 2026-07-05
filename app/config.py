@@ -42,7 +42,7 @@ def load_settings() -> Settings:
         source_chats=[c.strip() for c in os.environ.get("SOURCE_CHATS", "").split(",") if c.strip()],
         destination_chat_id=int(_require("DESTINATION_CHAT_ID")),
         openrouter_api_key=_require("OPENROUTER_API_KEY"),
-        openrouter_model=os.environ.get("OPENROUTER_MODEL", "anthropic/claude-3.5-haiku"),
+        openrouter_model=os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-chat"),
         timezone=os.environ.get("TIMEZONE", "UTC"),
         morning_time=os.environ.get("MORNING_TIME", "08:00"),
         night_time=os.environ.get("NIGHT_TIME", "21:00"),
