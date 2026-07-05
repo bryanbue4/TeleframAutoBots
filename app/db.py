@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 import aiosqlite
 
@@ -39,6 +40,11 @@ CREATE TABLE IF NOT EXISTS daily_stats (
 
 
 async def init_db(db_path: str) -> None:
+    # Ensure the parent directory exists (e.g. /data on Railway) so SQLite can
+    # create the file instead of crashing with "unable to open database file".
+    parent = Path(db_path).parent
+    if parent and str(parent) not in (".", ""):
+        parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(db_path) as db:
         await db.executescript(SCHEMA)
         await db.commit()
