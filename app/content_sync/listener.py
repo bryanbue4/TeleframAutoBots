@@ -14,7 +14,8 @@ FORWARD_DELAY_SECONDS = 5
 
 class ContentListener:
     """Reads new posts from public channels/groups the user account has joined
-    and reposts them to the destination chat, in order, once each.
+    and copies them to the destination chat, in order, once each (copied, not
+    forwarded, so there is no "Forwarded from" attribution).
 
     Uses a Telethon user session (not the Bot API) because the Bot API can only
     read chats where the bot itself is an admin/member - not arbitrary channels
@@ -52,14 +53,29 @@ class ContentListener:
             await self._queue.put(event.message)
 
     async def _forward_worker(self) -> None:
-        # Single consumer serializes forwards so order is preserved and posts
-        # are spaced out instead of arriving in a spammy burst.
+        # Single consumer serializes posts so order is preserved and they are
+        # spaced out instead of arriving in a spammy burst. We *copy* the
+        # content (re-send text/media) rather than forward it, so the
+        # destination post carries no "Forwarded from" header.
         while True:
             message = await self._queue.get()
             try:
-                await self.client.forward_messages(self.settings.destination_chat_id, message)
+                dest = self.settings.destination_chat_id
+                if message.media:
+                    await self.client.send_file(
+                        dest,
+                        message.media,
+                        caption=message.message or "",
+                        formatting_entities=message.entities,
+                    )
+                elif message.message:
+                    await self.client.send_message(
+                        dest,
+                        message.message,
+                        formatting_entities=message.entities,
+                    )
             except Exception:
-                logger.exception("Failed to forward message %s", message.id)
+                logger.exception("Failed to copy message %s", message.id)
             await asyncio.sleep(FORWARD_DELAY_SECONDS)
 
     async def run_forever(self) -> None:
