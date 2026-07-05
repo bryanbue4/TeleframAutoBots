@@ -31,7 +31,15 @@ and gives you a private assistant bot for reports and alerts.
 - `app/ai/router.py` - thin OpenRouter wrapper; swap `OPENROUTER_MODEL` per call
   to control cost/quality.
 
-## Setup
+## Quick start (Windows, easiest)
+
+1. Gather your credentials (see the numbered list below).
+2. Double-click **`setup.bat`** - it creates the environment, installs everything,
+   and opens `.env` in Notepad for you to fill in. Save and close.
+3. Double-click **`run.bat`** to start the bot. On first run it asks for your
+   phone number and a Telegram login code (once only).
+
+## Setup (details / other platforms)
 
 1. Create two bots with [@BotFather](https://t.me/BotFather): one for members
    (`CUSTOMER_BOT_TOKEN`), one for yourself (`ADMIN_BOT_TOKEN`). Add the
