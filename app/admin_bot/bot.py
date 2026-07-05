@@ -6,7 +6,13 @@ from aiogram.types import Message
 
 from app.ai.router import AIRouter
 from app.config import Settings
-from app.db import build_daily_report, set_customer_status
+from app.db import (
+    add_route,
+    build_daily_report,
+    list_routes,
+    remove_route,
+    set_customer_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +59,57 @@ def build_admin_dispatcher(settings: Settings, ai: AIRouter, customer_bot: Bot) 
         await customer_bot.ban_chat_member(settings.destination_chat_id, user_id)
         await set_customer_status(settings.db_path, user_id, "removed", reason="manually removed")
         await message.answer(f"Removed {user_id}.")
+
+    @dp.message(Command("addroute"))
+    async def on_addroute(message: Message) -> None:
+        parts = (message.text or "").split()
+        if len(parts) < 3:
+            await message.answer(
+                "Usage: /addroute <source> <destination>\n"
+                "Example: /addroute @ind_crypto -1002146551577\n"
+                "(source = channel you joined; destination = your channel id or @username)"
+            )
+            return
+        source, destination = parts[1], parts[2]
+        added = await add_route(settings.db_path, source, destination)
+        if added:
+            await message.answer(f"Route added: {source} -> {destination}\n(takes effect within ~30s)")
+        else:
+            await message.answer("That route already exists.")
+
+    @dp.message(Command("routes"))
+    async def on_routes(message: Message) -> None:
+        routes = await list_routes(settings.db_path)
+        if not routes:
+            await message.answer("No routes yet. Add one with /addroute <source> <destination>.")
+            return
+        lines = ["Your routes:"]
+        for r in routes:
+            state = "" if r["active"] else " (paused)"
+            lines.append(f"#{r['id']}: {r['source_chat']} -> {r['destination_chat']}{state}")
+        lines.append("\nRemove one with /delroute <id>.")
+        await message.answer("\n".join(lines))
+
+    @dp.message(Command("delroute"))
+    async def on_delroute(message: Message) -> None:
+        route_id = _parse_user_id(message)
+        if route_id is None:
+            await message.answer("Usage: /delroute <id>  (see ids with /routes)")
+            return
+        removed = await remove_route(settings.db_path, route_id)
+        await message.answer(f"Removed route #{route_id}." if removed else f"No route #{route_id} found.")
+
+    @dp.message(Command("help"))
+    async def on_help(message: Message) -> None:
+        await message.answer(
+            "Commands:\n"
+            "/report - daily stats\n"
+            "/routes - list content-copy routes\n"
+            "/addroute <source> <destination> - add a copy route\n"
+            "/delroute <id> - remove a route\n"
+            "/approve <user_id> | /reject <user_id> | /remove <user_id>\n"
+            "Any other message - chat with your AI assistant"
+        )
 
     @dp.message(Command("report"))
     async def on_report(message: Message) -> None:

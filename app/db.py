@@ -36,6 +36,15 @@ CREATE TABLE IF NOT EXISTS daily_stats (
     old_user_messages INTEGER NOT NULL DEFAULT 0,
     active_chats INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS channel_routes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_chat TEXT NOT NULL,
+    destination_chat TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source_chat, destination_chat)
+);
 """
 
 
@@ -47,6 +56,65 @@ async def init_db(db_path: str) -> None:
         parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(db_path) as db:
         await db.executescript(SCHEMA)
+        await db.commit()
+
+
+async def add_route(db_path: str, source_chat: str, destination_chat: str) -> bool:
+    """Add a source -> destination copy route. Returns False if it already exists."""
+    async with aiosqlite.connect(db_path) as db:
+        try:
+            await db.execute(
+                "INSERT INTO channel_routes (source_chat, destination_chat) VALUES (?, ?)",
+                (source_chat, destination_chat),
+            )
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+
+async def remove_route(db_path: str, route_id: int) -> bool:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("DELETE FROM channel_routes WHERE id = ?", (route_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def list_routes(db_path: str) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id, source_chat, destination_chat, active FROM channel_routes ORDER BY id"
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def get_active_routes(db_path: str) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT source_chat, destination_chat FROM channel_routes WHERE active = 1"
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def seed_routes_if_empty(db_path: str, sources: list[str], destination: str) -> None:
+    """One-time migration: if there are no routes yet but the old env-based
+    SOURCE_CHATS/DESTINATION_CHAT_ID are set, create a route for each source so
+    existing behaviour continues without manual setup.
+    """
+    if not sources or not destination:
+        return
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM channel_routes")
+        (count,) = await cursor.fetchone()
+        if count:
+            return
+        for source in sources:
+            await db.execute(
+                "INSERT OR IGNORE INTO channel_routes (source_chat, destination_chat) VALUES (?, ?)",
+                (source, str(destination)),
+            )
         await db.commit()
 
 

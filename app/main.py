@@ -8,7 +8,7 @@ from app.ai.router import AIRouter
 from app.config import load_settings
 from app.content_sync.listener import ContentListener
 from app.customer_bot.bot import build_customer_dispatcher
-from app.db import init_db
+from app.db import init_db, seed_routes_if_empty
 from app.scheduler.jobs import build_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +34,9 @@ async def run_listener_safely(listener: ContentListener) -> None:
 async def main() -> None:
     settings = load_settings()
     await init_db(settings.db_path)
+    # Carry the original env-based source/destination over into the routes table
+    # the first time, so existing behaviour continues with no manual setup.
+    await seed_routes_if_empty(settings.db_path, settings.source_chats, str(settings.destination_chat_id))
 
     ai = AIRouter(settings.openrouter_api_key, settings.openrouter_model)
 
