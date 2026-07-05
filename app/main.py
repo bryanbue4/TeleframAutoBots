@@ -15,6 +15,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+async def run_listener_safely(listener: ContentListener) -> None:
+    """Run the Telethon content listener without letting its failures take the
+    bots down. A bad/expired session string or any Telethon error is logged and
+    contained here - the customer and admin bots keep running regardless.
+    """
+    try:
+        await listener.start()
+        logger.info("Content listener started")
+        await listener.run_forever()
+    except Exception:
+        logger.exception(
+            "Content listener failed - continuing without content copy. "
+            "Check TELETHON_SESSION_STRING (it may have been revoked)."
+        )
+
+
 async def main() -> None:
     settings = load_settings()
     await init_db(settings.db_path)
@@ -27,17 +43,14 @@ async def main() -> None:
     customer_dp = build_customer_dispatcher(settings, ai, customer_bot, admin_bot)
     admin_dp = build_admin_dispatcher(settings, ai, customer_bot)
 
-    listener = ContentListener(settings)
-    await listener.start()
-
     scheduler = build_scheduler(customer_bot, admin_bot, ai, settings)
     scheduler.start()
 
-    logger.info("All services started")
+    logger.info("Starting bots (content listener runs in the background)")
     await asyncio.gather(
         customer_dp.start_polling(customer_bot),
         admin_dp.start_polling(admin_bot),
-        listener.run_forever(),
+        run_listener_safely(ContentListener(settings)),
     )
 
 
