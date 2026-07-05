@@ -18,9 +18,37 @@ Railway as a secret.
    ```
    !pip install telethon
    ```
-3. In the next cell, paste the entire contents of `generate_session.py` from
-   this repo, then run it.
-4. It asks for:
+3. In the next cell, paste this (Colab already runs an event loop, so it needs
+   the `await` style - the `telethon.sync` style in `generate_session.py` only
+   works in a plain terminal, not in Colab):
+   ```python
+   from telethon import TelegramClient
+   from telethon.sessions import StringSession
+   from telethon.errors import SessionPasswordNeededError
+
+   api_id = int(input("TELETHON_API_ID: ").strip())
+   api_hash = input("TELETHON_API_HASH: ").strip()
+
+   client = TelegramClient(StringSession(), api_id, api_hash)
+   await client.connect()
+
+   if not await client.is_user_authorized():
+       phone = input("Phone (with country code, e.g. +91...): ").strip()
+       await client.send_code_request(phone)
+       code = input("Code Telegram sent you: ").strip()
+       try:
+           await client.sign_in(phone=phone, code=code)
+       except SessionPasswordNeededError:
+           pw = input("2FA password: ").strip()
+           await client.sign_in(password=pw)
+
+   print("\n" + "=" * 60)
+   print("SESSION STRING (copy the whole line):")
+   print("=" * 60)
+   print(client.session.save())
+   print("=" * 60)
+   ```
+4. Run the cell. It asks for:
    - your **api_id** and **api_hash** (from my.telegram.org)
    - your **phone number** (with country code, e.g. `+91...`)
    - the **login code** Telegram sends you

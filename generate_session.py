@@ -1,5 +1,8 @@
-"""Generate a Telethon session string (run this ONCE, in a browser via Google
-Colab or any Python shell - no laptop install needed).
+"""Generate a Telethon session string (run this ONCE - no permanent install).
+
+NOTE: This telethon.sync version is for a plain terminal/shell. It does NOT
+work in Google Colab or Jupyter, which already run an event loop - use the
+async cell in RAILWAY.md (Part 1) there instead.
 
 The printed string lets the bot log into your Telegram account on a headless
 host (Railway) without an interactive login. Treat it like a password: anyone
