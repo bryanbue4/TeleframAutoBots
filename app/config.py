@@ -14,6 +14,7 @@ class Settings:
     telethon_api_id: int
     telethon_api_hash: str
     telethon_session_name: str
+    telethon_session_string: str
     source_chats: list[str]
     destination_chat_id: int
     openrouter_api_key: str
@@ -39,6 +40,7 @@ def load_settings() -> Settings:
         telethon_api_id=int(_require("TELETHON_API_ID")),
         telethon_api_hash=_require("TELETHON_API_HASH"),
         telethon_session_name=os.environ.get("TELETHON_SESSION_NAME", "content_listener"),
+        telethon_session_string=os.environ.get("TELETHON_SESSION_STRING", ""),
         source_chats=[c.strip() for c in os.environ.get("SOURCE_CHATS", "").split(",") if c.strip()],
         destination_chat_id=int(_require("DESTINATION_CHAT_ID")),
         openrouter_api_key=_require("OPENROUTER_API_KEY"),

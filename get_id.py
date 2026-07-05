@@ -9,6 +9,7 @@ Uses only the Python standard library so it runs without the full install.
 """
 
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -16,9 +17,16 @@ from pathlib import Path
 
 
 def read_token() -> str:
+    # Environment variable wins (works in Colab / Railway / anywhere).
+    env_token = os.environ.get("CUSTOMER_BOT_TOKEN", "").strip()
+    if env_token:
+        return env_token
     env_path = Path(__file__).with_name(".env")
     if not env_path.exists():
-        sys.exit("No .env file found. Run setup.bat first and fill in CUSTOMER_BOT_TOKEN.")
+        sys.exit(
+            "No CUSTOMER_BOT_TOKEN found. Either set it as an environment variable, "
+            "or run setup.bat and fill it into .env."
+        )
     for line in env_path.read_text(encoding="utf-8").splitlines():
         match = re.match(r"\s*CUSTOMER_BOT_TOKEN\s*=\s*(.+)\s*$", line)
         if match:

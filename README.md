@@ -31,6 +31,12 @@ and gives you a private assistant bot for reports and alerts.
 - `app/ai/router.py` - thin OpenRouter wrapper; swap `OPENROUTER_MODEL` per call
   to control cost/quality.
 
+## Deploy without a laptop (Railway, runs 24/7)
+
+See **[RAILWAY.md](RAILWAY.md)** for a browser-only deployment: generate a
+Telegram session string in Google Colab, connect the repo to Railway, set the
+environment variables, and it runs around the clock without your PC on.
+
 ## Quick start (Windows, easiest)
 
 1. Gather your credentials (see the numbered list below).

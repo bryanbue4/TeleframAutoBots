@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 
 from app.config import Settings
 from app.db import record_content_if_new
@@ -22,8 +23,16 @@ class ContentListener:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        # Prefer a session string (set via env on hosts like Railway where the
+        # filesystem is wiped on redeploy); fall back to a local session file
+        # for interactive local runs.
+        session = (
+            StringSession(settings.telethon_session_string)
+            if settings.telethon_session_string
+            else settings.telethon_session_name
+        )
         self.client = TelegramClient(
-            settings.telethon_session_name,
+            session,
             settings.telethon_api_id,
             settings.telethon_api_hash,
         )
