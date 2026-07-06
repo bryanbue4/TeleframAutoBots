@@ -45,6 +45,27 @@ class AIRouter:
         ]
         return await self.chat(messages)
 
+    async def moderate(self, text: str) -> str:
+        """Classify a member message as SAFE, ABUSIVE, or SPAM."""
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a content moderator for a Telegram community. Classify the "
+                    "user's message and reply with EXACTLY one word: SAFE, ABUSIVE, or SPAM. "
+                    "ABUSIVE = offensive, abusive, threatening or harassing language. "
+                    "SPAM = advertising, scams, promotional links, or repetitive junk. "
+                    "Everything else = SAFE."
+                ),
+            },
+            {"role": "user", "content": text},
+        ]
+        out = (await self.chat(messages, max_tokens=5)).strip().upper()
+        for label in ("ABUSIVE", "SPAM", "SAFE"):
+            if label in out:
+                return label
+        return "SAFE"
+
     async def generate_daily_report_summary(self, stats: dict) -> str:
         messages = [
             {

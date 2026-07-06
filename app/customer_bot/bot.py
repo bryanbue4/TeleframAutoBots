@@ -6,10 +6,12 @@ from aiogram.types import ChatJoinRequest, Message
 from app.ai.router import AIRouter
 from app.config import Settings
 from app.db import (
+    count_incoming,
     find_duplicate,
     flag_duplicate,
     flag_suspicious,
     record_message,
+    save_chat_message,
     set_customer_details,
     set_customer_status,
     upsert_join_request,
@@ -38,6 +40,13 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
             logger.exception("AI reply failed - sending fallback")
             return FALLBACK_REPLY
 
+    async def ai_moderate(user_text: str) -> str:
+        try:
+            return await ai.moderate(user_text)
+        except Exception:
+            logger.exception("AI moderation failed - assuming SAFE")
+            return "SAFE"
+
     @dp.chat_join_request()
     async def on_join_request(event: ChatJoinRequest) -> None:
         await upsert_join_request(settings.db_path, event.from_user.id)
@@ -64,29 +73,43 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
 
     @dp.message(F.text)
     async def on_text(message: Message) -> None:
-        await record_message(settings.db_path, message.from_user.id)
+        user = message.from_user
         text = message.text.strip()
+        await save_chat_message(settings.db_path, user.id, "in", text)
+        await record_message(settings.db_path, user.id)
 
-        if any(marker in text.lower() for marker in SUSPICIOUS_MARKERS):
-            await flag_suspicious(settings.db_path, message.from_user.id, "sent a link")
+        # Notify on a customer's very first message.
+        if await count_incoming(settings.db_path, user.id) == 1:
+            await notify_admin(f"New customer {user.full_name} (id {user.id}) messaged: {text[:200]}")
+
+        # AI moderation + link check -> alert the admin on abusive/spam content.
+        label = await ai_moderate(text)
+        has_link = any(marker in text.lower() for marker in SUSPICIOUS_MARKERS)
+        if label != "SAFE" or has_link:
+            reason = label.lower() if label != "SAFE" else "sent a link"
+            await flag_suspicious(settings.db_path, user.id, reason)
             await notify_admin(
-                f"Suspicious message from {message.from_user.full_name} "
-                f"(id {message.from_user.id}): {text[:200]}"
+                f"⚠️ ALERT [{reason.upper()}] from {user.full_name} "
+                f"(id {user.id}): {text[:200]}\nRemove with /remove {user.id}"
             )
 
         if "," in text and len(text.split(",")) == 2:
             name, city = (part.strip() for part in text.split(","))
-            await set_customer_details(settings.db_path, message.from_user.id, name, city)
-            duplicate_id = await find_duplicate(settings.db_path, name, city, message.from_user.id)
+            await set_customer_details(settings.db_path, user.id, name, city)
+            duplicate_id = await find_duplicate(settings.db_path, name, city, user.id)
             if duplicate_id:
-                await flag_duplicate(settings.db_path, message.from_user.id)
+                await flag_duplicate(settings.db_path, user.id)
                 await notify_admin(
                     f"Possible duplicate: {name} / {city} matches existing member id {duplicate_id} "
-                    f"(new member id {message.from_user.id})."
+                    f"(new member id {user.id})."
                 )
-            await message.answer(f"Thanks {name}! Great to have someone from {city} here.")
+            reply = f"Thanks {name}! Great to have someone from {city} here."
+            await save_chat_message(settings.db_path, user.id, "out", reply)
+            await message.answer(reply)
             return
 
-        await message.answer(await ai_reply(text))
+        reply = await ai_reply(text)
+        await save_chat_message(settings.db_path, user.id, "out", reply)
+        await message.answer(reply)
 
     return dp

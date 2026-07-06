@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS channel_routes (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(source_chat, destination_chat)
 );
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_user_id INTEGER NOT NULL,
+    direction TEXT NOT NULL,
+    text TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -219,6 +227,39 @@ async def record_message(db_path: str, telegram_user_id: int) -> None:
             (telegram_user_id,),
         )
         await db.commit()
+
+
+async def save_chat_message(db_path: str, telegram_user_id: int, direction: str, text: str) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT INTO chat_messages (telegram_user_id, direction, text) VALUES (?, ?, ?)",
+            (telegram_user_id, direction, text),
+        )
+        await db.commit()
+
+
+async def count_incoming(db_path: str, telegram_user_id: int) -> int:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM chat_messages WHERE telegram_user_id = ? AND direction = 'in'",
+            (telegram_user_id,),
+        )
+        (count,) = await cursor.fetchone()
+        return count
+
+
+async def get_chat_history(db_path: str, telegram_user_id: int, limit: int = 50) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT direction, text, created_at FROM chat_messages
+            WHERE telegram_user_id = ? ORDER BY id DESC LIMIT ?
+            """,
+            (telegram_user_id, limit),
+        )
+        rows = [dict(r) for r in await cursor.fetchall()]
+        return list(reversed(rows))
 
 
 async def all_active_customers(db_path: str) -> list[dict]:
