@@ -12,15 +12,21 @@ from app.db import (
     add_question,
     add_route,
     add_team_member,
+    add_trusted_device,
     build_daily_report,
     end_relay,
+    is_trusted_device,
     list_active_relays,
+    list_flagged_members,
     list_questions,
+    list_recent_customers,
     list_routes,
     list_team_members,
     remove_question,
     remove_route,
     remove_team_member,
+    set_customer_status,
+    start_relay,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,6 +87,7 @@ def _login_page(error: str = "") -> str:
         f"""<div class="card"><h1>Dashboard login</h1>{err}
         <form method="post" action="/login">
           <p><input type="password" name="password" placeholder="Password" required autofocus></p>
+          <p><label><input type="checkbox" name="remember" value="1"> Remember this device (skip the code next time)</label></p>
           <button>Continue</button>
         </form>
         <p class="hint">After the password, a one-time code is sent to your admin bot.</p></div>""",
@@ -118,7 +125,16 @@ def _del_form(action: str, field: str, value) -> str:
     )
 
 
-def _dashboard_page(stats, routes, questions, team, relays) -> str:
+def _post_button(action: str, field: str, value, label: str, css: str) -> str:
+    cls = f' class="{css}"' if css else ""
+    return (
+        f'<form method="post" action="{action}">'
+        f'<input type="hidden" name="{field}" value="{html.escape(str(value))}">'
+        f'<button{cls}>{html.escape(label)}</button></form>'
+    )
+
+
+def _dashboard_page(stats, routes, questions, team, relays, flagged, customers) -> str:
     route_items = [
         {"id": r["id"], "source": r["source_chat"], "destination": r["destination_chat"],
          "_action": _del_form("/delete", "id", r["id"])}
@@ -137,6 +153,23 @@ def _dashboard_page(stats, routes, questions, team, relays) -> str:
         {"customer_id": rl["customer_id"], "team_member_id": rl["team_member_id"],
          "_action": _del_form("/endrelay", "id", rl["customer_id"])}
         for rl in relays
+    ]
+    flagged_items = [
+        {"id": f["telegram_user_id"], "name": f["name"] or "-",
+         "reason": (f["suspicious_reasons"] or "").strip(" ;"),
+         "_action": _del_form("/removemember", "id", f["telegram_user_id"])}
+        for f in flagged
+    ]
+
+    def _customer_action(c):
+        if c["handler"] is not None:
+            return _post_button("/release", "id", c["telegram_user_id"], "Release to AI", "")
+        return _post_button("/take", "id", c["telegram_user_id"], "Hold AI (take over)", "")
+
+    customer_items = [
+        {"id": c["telegram_user_id"], "name": c["name"] or "-", "msgs": c["message_count"],
+         "state": "human" if c["handler"] is not None else "AI", "_action": _customer_action(c)}
+        for c in customers
     ]
 
     return _shell(
@@ -181,7 +214,17 @@ def _dashboard_page(stats, routes, questions, team, relays) -> str:
     <table><tr><th>Customer</th><th>Team member</th><th></th></tr>
       {_rows(relay_items, ["customer_id", "team_member_id"], "No active handoffs.")}</table>
     <p class="hint">Start a handoff from the admin bot: /assign &lt;customer_id&gt; &lt;team_id&gt;.
-      Changes apply within ~30 seconds.</p>""",
+      Changes apply within ~30 seconds.</p>
+
+    <h2>⚠️ Flagged members (spam / abuse)</h2>
+    <table><tr><th>ID</th><th>Name</th><th>Reason</th><th></th></tr>
+      {_rows(flagged_items, ["id", "name", "reason"], "No flagged members.")}</table>
+
+    <h2>Recent customers</h2>
+    <table><tr><th>ID</th><th>Name</th><th>Msgs</th><th>Handled by</th><th></th></tr>
+      {_rows(customer_items, ["id", "name", "msgs", "state"], "No customers yet.")}</table>
+    <p class="hint">"Hold AI" pauses the assistant so you can reply from the admin bot with
+      /say &lt;id&gt; &lt;message&gt;. "Release to AI" hands the chat back.</p>""",
     )
 
 
@@ -205,9 +248,24 @@ def build_dashboard_app(settings: Settings) -> web.Application:
         data = await request.post()
         if (data.get("password") or "") != settings.dashboard_password:
             return web.Response(text=_login_page("Wrong password."), content_type="text/html", status=401)
+        remember = bool(data.get("remember"))
+
+        # Trusted device -> skip OTP entirely.
+        if await is_trusted_device(settings.db_path, request.cookies.get("trust", "")):
+            sid = secrets.token_urlsafe(24)
+            _sessions[sid] = {"stage": "authed", "expiry": time.time() + SESSION_TTL_SECONDS}
+            resp = web.HTTPFound("/")
+            resp.set_cookie("sid", sid, httponly=True, max_age=SESSION_TTL_SECONDS, samesite="Lax")
+            return resp
+
         sid = secrets.token_urlsafe(24)
         code = f"{secrets.randbelow(1000000):06d}"
-        _sessions[sid] = {"stage": "otp", "otp": code, "expiry": time.time() + OTP_TTL_SECONDS}
+        _sessions[sid] = {
+            "stage": "otp",
+            "otp": code,
+            "expiry": time.time() + OTP_TTL_SECONDS,
+            "remember": remember,
+        }
         try:
             await _send_otp(settings, code)
         except Exception:
@@ -230,7 +288,12 @@ def build_dashboard_app(settings: Settings) -> web.Application:
         if (data.get("code") or "").strip() == sess["otp"]:
             sess["stage"] = "authed"
             sess["expiry"] = time.time() + SESSION_TTL_SECONDS
-            raise web.HTTPFound("/")
+            resp = web.HTTPFound("/")
+            if sess.get("remember"):
+                trust = secrets.token_urlsafe(24)
+                await add_trusted_device(settings.db_path, trust, days=30)
+                resp.set_cookie("trust", trust, httponly=True, max_age=30 * 24 * 3600, samesite="Lax")
+            return resp
         return web.Response(text=_otp_page("Wrong code."), content_type="text/html", status=401)
 
     async def logout(request):
@@ -247,6 +310,8 @@ def build_dashboard_app(settings: Settings) -> web.Application:
                 await list_questions(settings.db_path),
                 await list_team_members(settings.db_path),
                 await list_active_relays(settings.db_path),
+                await list_flagged_members(settings.db_path),
+                await list_recent_customers(settings.db_path),
             ),
             content_type="text/html",
         )
@@ -307,6 +372,30 @@ def build_dashboard_app(settings: Settings) -> web.Application:
             pass
         raise web.HTTPFound("/")
 
+    async def take(request):
+        data = await request.post()
+        try:
+            await start_relay(settings.db_path, int(data.get("id")), settings.admin_telegram_id)
+        except (TypeError, ValueError):
+            pass
+        raise web.HTTPFound("/")
+
+    async def release(request):
+        data = await request.post()
+        try:
+            await end_relay(settings.db_path, int(data.get("id")))
+        except (TypeError, ValueError):
+            pass
+        raise web.HTTPFound("/")
+
+    async def removemember(request):
+        data = await request.post()
+        try:
+            await set_customer_status(settings.db_path, int(data.get("id")), "removed", reason="dashboard")
+        except (TypeError, ValueError):
+            pass
+        raise web.HTTPFound("/")
+
     app.router.add_get("/login", login_get)
     app.router.add_post("/login", login_post)
     app.router.add_get("/otp", otp_get)
@@ -320,6 +409,9 @@ def build_dashboard_app(settings: Settings) -> web.Application:
     app.router.add_post("/addteam", addteam)
     app.router.add_post("/delteam", delteam)
     app.router.add_post("/endrelay", endrelay_route)
+    app.router.add_post("/take", take)
+    app.router.add_post("/release", release)
+    app.router.add_post("/removemember", removemember)
     return app
 
 

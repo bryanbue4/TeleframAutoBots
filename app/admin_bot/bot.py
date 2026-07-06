@@ -23,6 +23,7 @@ from app.db import (
     save_chat_message,
     set_customer_status,
     start_relay,
+    touch_relay,
 )
 
 logger = logging.getLogger(__name__)
@@ -252,6 +253,66 @@ def build_admin_dispatcher(settings: Settings, ai: AIRouter, customer_bot: Bot) 
         ended = await end_relay(settings.db_path, customer_id)
         await message.answer(f"Ended relay for #{customer_id}." if ended else f"No active relay for #{customer_id}.")
 
+    # ----- owner takeover (hold the AI and reply yourself) -----
+
+    @dp.message(Command("take"))
+    async def on_take(message: Message) -> None:
+        if not is_owner(message):
+            return
+        customer_id = _parse_id(message)
+        if customer_id is None:
+            await message.answer("Usage: /take <customer_id>  (pauses the AI so you reply yourself)")
+            return
+        await start_relay(settings.db_path, customer_id, settings.admin_telegram_id)
+        history = await get_chat_history(settings.db_path, customer_id, 15)
+        transcript = "\n".join(
+            f"{'Customer' if m['direction'] == 'in' else 'Bot/You'}: {m['text']}" for m in history
+        ) or "(no history yet)"
+        await message.answer(
+            f"You are now handling customer #{customer_id}; the AI is paused.\n"
+            f"Reply with /say {customer_id} <message>. Let the AI resume with /release {customer_id}.\n\n"
+            f"Recent history:\n{transcript}"
+        )
+
+    @dp.message(Command("say"))
+    async def on_say(message: Message) -> None:
+        if not is_owner(message):
+            return
+        parts = (message.text or "").split(maxsplit=2)
+        if len(parts) < 3:
+            await message.answer("Usage: /say <customer_id> <message>")
+            return
+        try:
+            customer_id = int(parts[1])
+        except ValueError:
+            await message.answer("Customer id must be a number.")
+            return
+        text = parts[2]
+        try:
+            await customer_bot.send_message(customer_id, text)
+            await save_chat_message(settings.db_path, customer_id, "out", text)
+            await touch_relay(settings.db_path, customer_id)
+            await message.answer("Sent.")
+        except Exception:
+            logger.exception("Failed to /say to customer")
+            await message.answer("Couldn't deliver that to the customer.")
+
+    @dp.message(Command("release"))
+    async def on_release(message: Message) -> None:
+        if not is_owner(message):
+            return
+        customer_id = _parse_id(message)
+        if customer_id is None:
+            await message.answer("Usage: /release <customer_id>  (lets the AI take back over)")
+            return
+        ended = await end_relay(settings.db_path, customer_id)
+        if ended:
+            try:
+                await customer_bot.send_message(customer_id, "You're now back with our assistant.")
+            except Exception:
+                logger.exception("Failed to notify customer of release")
+        await message.answer(f"AI resumed for #{customer_id}." if ended else f"No active hold on #{customer_id}.")
+
     # ----- reports + help -----
 
     @dp.message(Command("report"))
@@ -315,6 +376,7 @@ def build_admin_dispatcher(settings: Settings, ai: AIRouter, customer_bot: Bot) 
             try:
                 await customer_bot.send_message(customer_id, text)
                 await save_chat_message(settings.db_path, customer_id, "out", text)
+                await touch_relay(settings.db_path, customer_id)
             except Exception:
                 logger.exception("Failed to relay team message to customer")
                 await message.answer("Couldn't deliver that to the customer.")

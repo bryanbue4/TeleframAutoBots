@@ -70,9 +70,23 @@ CREATE TABLE IF NOT EXISTS relays (
     customer_id INTEGER PRIMARY KEY,
     team_member_id INTEGER NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_handler_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS trusted_devices (
+    token TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expiry TEXT NOT NULL
 );
 """
+
+
+async def _ensure_column(db, table: str, column: str, decl: str) -> None:
+    cursor = await db.execute(f"PRAGMA table_info({table})")
+    existing = {row[1] for row in await cursor.fetchall()}
+    if column not in existing:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 async def init_db(db_path: str) -> None:
@@ -83,6 +97,8 @@ async def init_db(db_path: str) -> None:
         parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(db_path) as db:
         await db.executescript(SCHEMA)
+        # Migrate older databases that predate newer columns.
+        await _ensure_column(db, "relays", "last_handler_at", "TEXT")
         await db.commit()
 
 
@@ -372,6 +388,88 @@ async def customer_for_team(db_path: str, team_member_id: int) -> int | None:
         )
         row = await cursor.fetchone()
         return row[0] if row else None
+
+
+async def get_relay(db_path: str, customer_id: int) -> dict | None:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT customer_id, team_member_id, last_handler_at FROM relays "
+            "WHERE customer_id = ? AND active = 1",
+            (customer_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def touch_relay(db_path: str, customer_id: int) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "UPDATE relays SET last_handler_at = datetime('now') WHERE customer_id = ?",
+            (customer_id,),
+        )
+        await db.commit()
+
+
+async def relay_seconds_since_handler(db_path: str, customer_id: int) -> float | None:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            "SELECT strftime('%s','now') - strftime('%s', last_handler_at) FROM relays "
+            "WHERE customer_id = ? AND active = 1",
+            (customer_id,),
+        )
+        row = await cursor.fetchone()
+        return float(row[0]) if row and row[0] is not None else None
+
+
+async def list_flagged_members(db_path: str) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT telegram_user_id, name, suspicious_reasons FROM customers
+            WHERE is_suspicious_flag = 1 AND status != 'removed'
+            ORDER BY last_message_at DESC
+            """
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def list_recent_customers(db_path: str, limit: int = 20) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT c.telegram_user_id, c.name, c.message_count,
+                   (SELECT team_member_id FROM relays r WHERE r.customer_id = c.telegram_user_id
+                    AND r.active = 1) AS handler
+            FROM customers c
+            WHERE c.last_message_at IS NOT NULL
+            ORDER BY c.last_message_at DESC LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def add_trusted_device(db_path: str, token: str, days: int = 30) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO trusted_devices (token, expiry) VALUES (?, datetime('now', ?))",
+            (token, f"+{days} days"),
+        )
+        await db.commit()
+
+
+async def is_trusted_device(db_path: str, token: str) -> bool:
+    if not token:
+        return False
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM trusted_devices WHERE token = ? AND expiry > datetime('now')",
+            (token,),
+        )
+        return await cursor.fetchone() is not None
 
 
 async def all_active_customers(db_path: str) -> list[dict]:

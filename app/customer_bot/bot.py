@@ -7,11 +7,13 @@ from app.ai.router import AIRouter
 from app.config import Settings
 from app.db import (
     count_incoming,
+    end_relay,
     find_duplicate,
     flag_duplicate,
     flag_suspicious,
     get_active_questions,
     record_message,
+    relay_seconds_since_handler,
     save_chat_message,
     set_customer_details,
     set_customer_status,
@@ -23,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 SUSPICIOUS_MARKERS = ("http://", "https://", "t.me/")
 FALLBACK_REPLY = "Hi! Thanks for your message - I'll get back to you shortly."
+# If the human handling a chat goes quiet this long while the customer keeps
+# messaging, the AI automatically takes back over.
+HANDOFF_INACTIVITY_SECONDS = 15 * 60
 
 
 def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_bot: Bot) -> Dispatcher:
@@ -80,15 +85,25 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
         await save_chat_message(settings.db_path, user.id, "in", text)
         await record_message(settings.db_path, user.id)
 
-        # If this customer is in a live relay with a team member, pass their
-        # message straight through instead of AI-replying.
+        # If this customer is in a live relay (team member or owner), pass their
+        # message straight through - unless the human has gone quiet too long,
+        # in which case the AI automatically takes back over.
         team_id = await team_for_customer(settings.db_path, user.id)
         if team_id:
-            try:
-                await admin_bot.send_message(team_id, f"👤 {user.full_name} (#{user.id}): {text}")
-            except Exception:
-                logger.exception("Failed to relay customer message to team member")
-            return
+            idle = await relay_seconds_since_handler(settings.db_path, user.id)
+            if idle is not None and idle > HANDOFF_INACTIVITY_SECONDS:
+                await end_relay(settings.db_path, user.id)
+                await notify_admin(
+                    f"AI resumed for {user.full_name} (id {user.id}) - handler was idle "
+                    f"{int(idle // 60)} min while the customer kept messaging."
+                )
+                # fall through to the normal AI flow below
+            else:
+                try:
+                    await admin_bot.send_message(team_id, f"👤 {user.full_name} (#{user.id}): {text}")
+                except Exception:
+                    logger.exception("Failed to relay customer message to team member")
+                return
 
         # Notify on a customer's very first message.
         if await count_incoming(settings.db_path, user.id) == 1:
