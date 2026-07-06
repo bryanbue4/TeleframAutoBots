@@ -23,6 +23,8 @@ class Settings:
     morning_time: str
     night_time: str
     db_path: str
+    dashboard_password: str
+    port: int
 
 
 def _require(name: str) -> str:
@@ -49,4 +51,6 @@ def load_settings() -> Settings:
         morning_time=os.environ.get("MORNING_TIME", "08:00"),
         night_time=os.environ.get("NIGHT_TIME", "21:00"),
         db_path=os.environ.get("DB_PATH", "data/app.db"),
+        dashboard_password=os.environ.get("DASHBOARD_PASSWORD", ""),
+        port=int(os.environ.get("PORT", "8080")),
     )

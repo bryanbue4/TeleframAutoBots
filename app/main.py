@@ -2,17 +2,34 @@ import asyncio
 import logging
 
 from aiogram import Bot
+from aiogram.types import BotCommand
 
 from app.admin_bot.bot import build_admin_dispatcher
 from app.ai.router import AIRouter
 from app.config import load_settings
 from app.content_sync.listener import ContentListener
 from app.customer_bot.bot import build_customer_dispatcher
+from app.dashboard.server import run_dashboard
 from app.db import init_db, seed_routes_if_empty
 from app.scheduler.jobs import build_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+ADMIN_COMMANDS = [
+    BotCommand(command="report", description="Daily stats report"),
+    BotCommand(command="routes", description="List content-copy routes"),
+    BotCommand(command="addroute", description="Add a route: /addroute <source> <destination>"),
+    BotCommand(command="delroute", description="Remove a route: /delroute <id>"),
+    BotCommand(command="approve", description="Approve a member: /approve <user_id>"),
+    BotCommand(command="reject", description="Reject a member: /reject <user_id>"),
+    BotCommand(command="remove", description="Remove a member: /remove <user_id>"),
+    BotCommand(command="help", description="Show all commands"),
+]
+
+CUSTOMER_COMMANDS = [
+    BotCommand(command="start", description="Start chatting"),
+]
 
 
 async def run_listener_safely(listener: ContentListener) -> None:
@@ -49,11 +66,19 @@ async def main() -> None:
     scheduler = build_scheduler(customer_bot, admin_bot, ai, settings)
     scheduler.start()
 
-    logger.info("Starting bots (content listener runs in the background)")
+    # Register command menus so the commands show up in Telegram's "/" menu.
+    try:
+        await admin_bot.set_my_commands(ADMIN_COMMANDS)
+        await customer_bot.set_my_commands(CUSTOMER_COMMANDS)
+    except Exception:
+        logger.exception("Failed to set command menus")
+
+    logger.info("Starting bots (content listener + dashboard run in the background)")
     await asyncio.gather(
         customer_dp.start_polling(customer_bot),
         admin_dp.start_polling(admin_bot),
         run_listener_safely(ContentListener(settings)),
+        run_dashboard(settings),
     )
 
 
