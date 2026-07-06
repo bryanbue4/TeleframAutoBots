@@ -1,6 +1,14 @@
+import logging
+
 import httpx
 
+logger = logging.getLogger(__name__)
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Known-good models tried (in order) if the configured model fails, so a
+# mistyped/unavailable OPENROUTER_MODEL can't silently break every AI reply.
+FALLBACK_MODELS = ["deepseek/deepseek-chat", "openai/gpt-4o-mini"]
 
 
 class AIRouter:
@@ -15,19 +23,27 @@ class AIRouter:
         self.default_model = default_model
 
     async def chat(self, messages: list[dict], model: str | None = None, max_tokens: int = 400) -> str:
+        primary = model or self.default_model
+        candidates = [primary] + [m for m in FALLBACK_MODELS if m != primary]
+        last_error: object = None
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                OPENROUTER_URL,
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json={
-                    "model": model or self.default_model,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
+            for candidate in candidates:
+                try:
+                    response = await client.post(
+                        OPENROUTER_URL,
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        json={"model": candidate, "messages": messages, "max_tokens": max_tokens},
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    if "choices" in data:
+                        return data["choices"][0]["message"]["content"]
+                    last_error = data
+                    logger.warning("Model %s returned no choices: %s", candidate, data)
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    logger.warning("Model %s failed: %s", candidate, exc)
+        raise RuntimeError(f"All AI models failed. Last error: {last_error}")
 
     async def reply_as_customer_assistant(
         self,
