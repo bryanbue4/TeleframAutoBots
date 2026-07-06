@@ -351,6 +351,16 @@ def build_admin_dispatcher(settings: Settings, ai: AIRouter, customer_bot: Bot) 
             logger.exception("Report AI summary failed - sending raw stats")
             await message.answer(raw)
 
+    @dp.message(Command("diag"))
+    async def on_diag(message: Message) -> None:
+        if not is_owner(message):
+            return
+        try:
+            out = await ai.chat([{"role": "user", "content": "reply with exactly: OK"}], max_tokens=5)
+            await message.answer(f"Configured model: {ai.default_model}\nAI test: SUCCESS -> {out.strip()}")
+        except Exception as exc:  # noqa: BLE001
+            await message.answer(f"Configured model: {ai.default_model}\nAI test FAILED: {type(exc).__name__}: {exc}")
+
     @dp.message(Command("help"))
     async def on_help(message: Message) -> None:
         if not is_owner(message):
