@@ -355,6 +355,15 @@ async def team_for_customer(db_path: str, customer_id: int) -> int | None:
         return row[0] if row else None
 
 
+async def list_active_relays(db_path: str) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT customer_id, team_member_id FROM relays WHERE active = 1 ORDER BY created_at"
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+
 async def customer_for_team(db_path: str, team_member_id: int) -> int | None:
     async with aiosqlite.connect(db_path) as db:
         cursor = await db.execute(
