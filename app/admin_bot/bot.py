@@ -1,4 +1,5 @@
 import logging
+import re
 
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
@@ -14,6 +15,7 @@ from app.db import (
     customer_for_team,
     end_relay,
     get_chat_history,
+    get_relay,
     list_questions,
     list_routes,
     list_team_members,
@@ -42,6 +44,16 @@ def _parse_id(message: Message) -> int | None:
 def _text_after_command(message: Message) -> str:
     parts = (message.text or "").split(maxsplit=1)
     return parts[1].strip() if len(parts) > 1 else ""
+
+
+def _customer_id_from_reply(message: Message) -> int | None:
+    """If this message is a Telegram reply to a customer notice/relay the bot
+    sent (which embed the customer id as '#42' or 'id 42'), return that id."""
+    replied = message.reply_to_message
+    if not replied or not replied.text:
+        return None
+    match = re.search(r"#(\d+)", replied.text) or re.search(r"\bid (\d+)", replied.text)
+    return int(match.group(1)) if match else None
 
 
 def build_admin_dispatcher(settings: Settings, ai: AIRouter, customer_bot: Bot) -> Dispatcher:
@@ -289,6 +301,9 @@ def build_admin_dispatcher(settings: Settings, ai: AIRouter, customer_bot: Bot) 
             return
         text = parts[2]
         try:
+            # Auto-hold the AI if this customer isn't already being handled.
+            if await get_relay(settings.db_path, customer_id) is None:
+                await start_relay(settings.db_path, customer_id, settings.admin_telegram_id)
             await customer_bot.send_message(customer_id, text)
             await save_chat_message(settings.db_path, customer_id, "out", text)
             await touch_relay(settings.db_path, customer_id)
@@ -359,6 +374,22 @@ def build_admin_dispatcher(settings: Settings, ai: AIRouter, customer_bot: Bot) 
             return
         uid = message.from_user.id
         text = message.text
+
+        # Replying (Telegram reply) to a customer notice/relay = start handling
+        # that customer: the reply goes to them and the AI auto-pauses.
+        replied_customer = _customer_id_from_reply(message)
+        if replied_customer is not None:
+            if await get_relay(settings.db_path, replied_customer) is None:
+                await start_relay(settings.db_path, replied_customer, uid)
+            try:
+                await customer_bot.send_message(replied_customer, text)
+                await save_chat_message(settings.db_path, replied_customer, "out", text)
+                await touch_relay(settings.db_path, replied_customer)
+                await message.answer(f"Sent to #{replied_customer} (AI paused).")
+            except Exception:
+                logger.exception("Failed to send reply to customer")
+                await message.answer("Couldn't deliver that to the customer.")
+            return
 
         if uid != settings.admin_telegram_id:
             # A team member replying inside a live relay.
