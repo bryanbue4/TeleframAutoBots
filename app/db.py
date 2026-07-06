@@ -53,6 +53,25 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     text TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS intake_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS team_members (
+    telegram_id INTEGER PRIMARY KEY,
+    name TEXT,
+    active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS relays (
+    customer_id INTEGER PRIMARY KEY,
+    team_member_id INTEGER NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -260,6 +279,90 @@ async def get_chat_history(db_path: str, telegram_user_id: int, limit: int = 50)
         )
         rows = [dict(r) for r in await cursor.fetchall()]
         return list(reversed(rows))
+
+
+async def add_question(db_path: str, question: str) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("INSERT INTO intake_questions (question) VALUES (?)", (question,))
+        await db.commit()
+
+
+async def list_questions(db_path: str) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT id, question, active FROM intake_questions ORDER BY id")
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def remove_question(db_path: str, question_id: int) -> bool:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("DELETE FROM intake_questions WHERE id = ?", (question_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_active_questions(db_path: str) -> list[str]:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("SELECT question FROM intake_questions WHERE active = 1 ORDER BY id")
+        return [row[0] for row in await cursor.fetchall()]
+
+
+async def add_team_member(db_path: str, telegram_id: int, name: str) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO team_members (telegram_id, name, active) VALUES (?, ?, 1)",
+            (telegram_id, name),
+        )
+        await db.commit()
+
+
+async def list_team_members(db_path: str) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT telegram_id, name, active FROM team_members ORDER BY name")
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def remove_team_member(db_path: str, telegram_id: int) -> bool:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("DELETE FROM team_members WHERE telegram_id = ?", (telegram_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def start_relay(db_path: str, customer_id: int, team_member_id: int) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO relays (customer_id, team_member_id, active) VALUES (?, ?, 1)",
+            (customer_id, team_member_id),
+        )
+        await db.commit()
+
+
+async def end_relay(db_path: str, customer_id: int) -> bool:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("DELETE FROM relays WHERE customer_id = ?", (customer_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def team_for_customer(db_path: str, customer_id: int) -> int | None:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            "SELECT team_member_id FROM relays WHERE customer_id = ? AND active = 1", (customer_id,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+
+async def customer_for_team(db_path: str, team_member_id: int) -> int | None:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            "SELECT customer_id FROM relays WHERE team_member_id = ? AND active = 1 LIMIT 1",
+            (team_member_id,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
 
 
 async def all_active_customers(db_path: str) -> list[dict]:

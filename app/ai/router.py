@@ -29,17 +29,27 @@ class AIRouter:
             data = response.json()
             return data["choices"][0]["message"]["content"]
 
-    async def reply_as_customer_assistant(self, user_message: str, history: list[dict] | None = None) -> str:
+    async def reply_as_customer_assistant(
+        self,
+        user_message: str,
+        history: list[dict] | None = None,
+        questions: list[str] | None = None,
+    ) -> str:
+        system = (
+            "You are a friendly customer assistant for a private Telegram community. "
+            "Greet new members warmly, answer questions helpfully and briefly, and "
+            "naturally ask for the member's name and city if not already known. Keep "
+            "replies short and conversational."
+        )
+        if questions:
+            joined = "; ".join(questions)
+            system += (
+                " Over the course of the conversation, naturally and gradually try to "
+                f"learn the answers to these questions: {joined}. Ask at most one at a "
+                "time, only when it fits the flow - never fire them all at once."
+            )
         messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a friendly customer assistant for a private Telegram "
-                    "community. Greet new members warmly, answer questions helpfully "
-                    "and briefly, and naturally ask for the member's name and city if "
-                    "not already known. Keep replies short and conversational."
-                ),
-            },
+            {"role": "system", "content": system},
             *(history or []),
             {"role": "user", "content": user_message},
         ]

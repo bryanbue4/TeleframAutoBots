@@ -10,10 +10,12 @@ from app.db import (
     find_duplicate,
     flag_duplicate,
     flag_suspicious,
+    get_active_questions,
     record_message,
     save_chat_message,
     set_customer_details,
     set_customer_status,
+    team_for_customer,
     upsert_join_request,
 )
 
@@ -33,9 +35,9 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
         except Exception:
             logger.exception("Failed to notify admin")
 
-    async def ai_reply(user_text: str) -> str:
+    async def ai_reply(user_text: str, questions: list[str] | None = None) -> str:
         try:
-            return await ai.reply_as_customer_assistant(user_text)
+            return await ai.reply_as_customer_assistant(user_text, questions=questions)
         except Exception:
             logger.exception("AI reply failed - sending fallback")
             return FALLBACK_REPLY
@@ -78,6 +80,16 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
         await save_chat_message(settings.db_path, user.id, "in", text)
         await record_message(settings.db_path, user.id)
 
+        # If this customer is in a live relay with a team member, pass their
+        # message straight through instead of AI-replying.
+        team_id = await team_for_customer(settings.db_path, user.id)
+        if team_id:
+            try:
+                await admin_bot.send_message(team_id, f"👤 {user.full_name} (#{user.id}): {text}")
+            except Exception:
+                logger.exception("Failed to relay customer message to team member")
+            return
+
         # Notify on a customer's very first message.
         if await count_incoming(settings.db_path, user.id) == 1:
             await notify_admin(f"New customer {user.full_name} (id {user.id}) messaged: {text[:200]}")
@@ -108,7 +120,8 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
             await message.answer(reply)
             return
 
-        reply = await ai_reply(text)
+        questions = await get_active_questions(settings.db_path)
+        reply = await ai_reply(text, questions)
         await save_chat_message(settings.db_path, user.id, "out", reply)
         await message.answer(reply)
 
