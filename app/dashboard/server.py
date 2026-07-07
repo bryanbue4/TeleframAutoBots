@@ -8,6 +8,7 @@ import httpx
 from aiohttp import web
 
 from app.config import Settings
+from app.dashboard.mcp import make_mcp_handler
 from app.db import (
     add_question,
     add_route,
@@ -233,7 +234,9 @@ def build_dashboard_app(settings: Settings) -> web.Application:
 
     @web.middleware
     async def auth_mw(request: web.Request, handler):
-        if request.path in ("/login", "/otp", "/logout"):
+        # The MCP endpoint authenticates via its secret token in the path, and
+        # the login pages must be reachable without a session.
+        if request.path in ("/login", "/otp", "/logout") or request.path.startswith("/mcp/"):
             return await handler(request)
         if not _authed(request):
             raise web.HTTPFound("/login")
@@ -412,6 +415,9 @@ def build_dashboard_app(settings: Settings) -> web.Application:
     app.router.add_post("/take", take)
     app.router.add_post("/release", release)
     app.router.add_post("/removemember", removemember)
+    # MCP endpoint for controlling the bot from Claude (custom connector).
+    mcp_handler = make_mcp_handler(settings)
+    app.router.add_route("*", "/mcp/{token}", mcp_handler)
     return app
 
 

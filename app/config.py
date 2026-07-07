@@ -25,6 +25,7 @@ class Settings:
     db_path: str
     dashboard_password: str
     port: int
+    mcp_token: str
 
 
 def _require(name: str) -> str:
@@ -60,4 +61,5 @@ def load_settings() -> Settings:
         db_path=_optional("DB_PATH", "data/app.db"),
         dashboard_password=os.environ.get("DASHBOARD_PASSWORD", ""),
         port=int(os.environ.get("PORT", "8080")),
+        mcp_token=_optional("MCP_TOKEN", ""),
     )
