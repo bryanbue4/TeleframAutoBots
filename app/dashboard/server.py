@@ -18,6 +18,7 @@ from app.db import (
     end_relay,
     is_trusted_device,
     list_active_relays,
+    list_detected_channels,
     list_flagged_members,
     list_questions,
     list_recent_customers,
@@ -135,7 +136,7 @@ def _post_button(action: str, field: str, value, label: str, css: str) -> str:
     )
 
 
-def _dashboard_page(stats, routes, questions, team, relays, flagged, customers) -> str:
+def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, channels) -> str:
     route_items = [
         {"id": r["id"], "source": r["source_chat"], "destination": r["destination_chat"],
          "_action": _del_form("/delete", "id", r["id"])}
@@ -172,6 +173,10 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers) 
          "state": "human" if c["handler"] is not None else "AI", "_action": _customer_action(c)}
         for c in customers
     ]
+    channel_items = [
+        {"title": ch["title"] or "-", "id": ch["chat_id"], "type": ch["chat_type"], "_action": ""}
+        for ch in channels
+    ]
 
     return _shell(
         "Dashboard",
@@ -195,6 +200,11 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers) 
       <input type="text" name="source" placeholder="Source @channel" required>
       <input type="text" name="destination" placeholder="Destination id/@channel" required>
       <button>Add route</button></form>
+
+    <h2>Detected channels (add the bot to a channel to see its ID)</h2>
+    <table><tr><th>Title</th><th>Channel ID</th><th>Type</th><th></th></tr>
+      {_rows(channel_items, ["title", "id", "type"], "None yet - add the bot to a channel as admin.")}</table>
+    <p class="hint">Copy an ID from here into the Destination field above to route content to it.</p>
 
     <h2>Intake questions (woven into chats)</h2>
     <table><tr><th>#</th><th>Question</th><th></th></tr>
@@ -315,6 +325,7 @@ def build_dashboard_app(settings: Settings) -> web.Application:
                 await list_active_relays(settings.db_path),
                 await list_flagged_members(settings.db_path),
                 await list_recent_customers(settings.db_path),
+                await list_detected_channels(settings.db_path),
             ),
             content_type="text/html",
         )

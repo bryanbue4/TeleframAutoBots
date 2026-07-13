@@ -15,6 +15,7 @@ from app.db import (
     record_message,
     relay_seconds_since_handler,
     save_chat_message,
+    save_detected_channel,
     set_customer_details,
     set_customer_status,
     team_for_customer,
@@ -61,6 +62,7 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
         status = event.new_chat_member.status
         if status in ("administrator", "member"):
             chat = event.chat
+            await save_detected_channel(settings.db_path, chat.id, chat.title or "", chat.type)
             await notify_admin(
                 f"✅ I was added to '{chat.title}' ({chat.type}).\n"
                 f"Channel ID: {chat.id}\n"

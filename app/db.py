@@ -79,6 +79,13 @@ CREATE TABLE IF NOT EXISTS trusted_devices (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expiry TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS detected_channels (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT,
+    chat_type TEXT,
+    seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -448,6 +455,28 @@ async def list_recent_customers(db_path: str, limit: int = 20) -> list[dict]:
             ORDER BY c.last_message_at DESC LIMIT ?
             """,
             (limit,),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def save_detected_channel(db_path: str, chat_id: int, title: str, chat_type: str) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """
+            INSERT INTO detected_channels (chat_id, title, chat_type, seen_at)
+            VALUES (?, ?, ?, datetime('now'))
+            ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title, seen_at = datetime('now')
+            """,
+            (chat_id, title, chat_type),
+        )
+        await db.commit()
+
+
+async def list_detected_channels(db_path: str) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT chat_id, title, chat_type FROM detected_channels ORDER BY seen_at DESC"
         )
         return [dict(r) for r in await cursor.fetchall()]
 
