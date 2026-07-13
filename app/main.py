@@ -35,6 +35,7 @@ ADMIN_COMMANDS = [
     BotCommand(command="approve", description="Approve a member: /approve <user_id>"),
     BotCommand(command="reject", description="Reject a member: /reject <user_id>"),
     BotCommand(command="remove", description="Remove a member: /remove <user_id>"),
+    BotCommand(command="setup", description="Show setup + how to add a new channel"),
     BotCommand(command="diag", description="Check AI model + connection"),
     BotCommand(command="help", description="Show all commands"),
 ]

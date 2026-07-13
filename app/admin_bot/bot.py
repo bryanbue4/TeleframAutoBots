@@ -351,6 +351,28 @@ def build_admin_dispatcher(settings: Settings, ai: AIRouter, customer_bot: Bot) 
             logger.exception("Report AI summary failed - sending raw stats")
             await message.answer(raw)
 
+    @dp.message(Command("setup"))
+    async def on_setup(message: Message) -> None:
+        if not is_owner(message):
+            return
+        routes = await list_routes(settings.db_path)
+        questions = await list_questions(settings.db_path)
+        team = await list_team_members(settings.db_path)
+        lines = [
+            "⚙️ Current setup",
+            f"Routes: {len(routes)} | Questions: {len(questions)} | Team: {len(team)}",
+            "",
+            "To start a NEW channel:",
+            "1. Create the channel and add me (@" + (await message.bot.me()).username + ") as admin",
+            "2. I'll DM you its Channel ID automatically",
+            "3. Add a copy route:  /addroute <source> <that id>",
+            "",
+            "Manage: /routes  /addroute  /delroute",
+            "Questions: /questions  /addquestion  /delquestion",
+            "Team: /team  /addteam  /assign",
+        ]
+        await message.answer("\n".join(lines))
+
     @dp.message(Command("diag"))
     async def on_diag(message: Message) -> None:
         if not is_owner(message):

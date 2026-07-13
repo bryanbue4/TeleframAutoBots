@@ -1,7 +1,7 @@
 import logging
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import ChatJoinRequest, Message
+from aiogram.types import ChatJoinRequest, ChatMemberUpdated, Message
 
 from app.ai.router import AIRouter
 from app.config import Settings
@@ -53,6 +53,19 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
         except Exception:
             logger.exception("AI moderation failed - assuming SAFE")
             return "SAFE"
+
+    @dp.my_chat_member()
+    async def on_added_to_chat(event: ChatMemberUpdated) -> None:
+        # When the bot is added to a new channel/group, tell the owner its id so
+        # they can use it as a destination without hunting for the id manually.
+        status = event.new_chat_member.status
+        if status in ("administrator", "member"):
+            chat = event.chat
+            await notify_admin(
+                f"✅ I was added to '{chat.title}' ({chat.type}).\n"
+                f"Channel ID: {chat.id}\n"
+                f"Use it as a destination, e.g.  /addroute @source {chat.id}"
+            )
 
     @dp.chat_join_request()
     async def on_join_request(event: ChatJoinRequest) -> None:
