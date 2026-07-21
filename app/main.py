@@ -4,13 +4,14 @@ import logging
 from aiogram import Bot
 from aiogram.types import BotCommand
 
+from app.accounts import build_account_settings
 from app.admin_bot.bot import build_admin_dispatcher
 from app.ai.router import AIRouter
 from app.config import load_settings
 from app.content_sync.listener import ContentListener
 from app.customer_bot.bot import build_customer_dispatcher
 from app.dashboard.server import run_dashboard
-from app.db import init_db, seed_routes_if_empty
+from app.db import get_active_accounts, init_db, seed_routes_if_empty
 from app.scheduler.jobs import build_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -66,14 +67,12 @@ async def run_listener_safely(listener: ContentListener) -> None:
         )
 
 
-async def main() -> None:
-    settings = load_settings()
+async def run_account(settings, ai: AIRouter) -> None:
+    """Start one account's full stack: customer bot, admin bot, content
+    listener, and scheduler. Each account has its own isolated database.
+    """
     await init_db(settings.db_path)
-    # Carry the original env-based source/destination over into the routes table
-    # the first time, so existing behaviour continues with no manual setup.
     await seed_routes_if_empty(settings.db_path, settings.source_chats, str(settings.destination_chat_id))
-
-    ai = AIRouter(settings.openrouter_api_key, settings.openrouter_model)
 
     customer_bot = Bot(token=settings.customer_bot_token)
     admin_bot = Bot(token=settings.admin_bot_token)
@@ -84,20 +83,43 @@ async def main() -> None:
     scheduler = build_scheduler(customer_bot, admin_bot, ai, settings)
     scheduler.start()
 
-    # Register command menus so the commands show up in Telegram's "/" menu.
     try:
         await admin_bot.set_my_commands(ADMIN_COMMANDS)
         await customer_bot.set_my_commands(CUSTOMER_COMMANDS)
     except Exception:
         logger.exception("Failed to set command menus")
 
-    logger.info("Starting bots (content listener + dashboard run in the background)")
     await asyncio.gather(
         customer_dp.start_polling(customer_bot),
         admin_dp.start_polling(admin_bot),
         run_listener_safely(ContentListener(settings)),
-        run_dashboard(settings),
     )
+
+
+async def run_account_safely(settings, ai: AIRouter, label: str) -> None:
+    try:
+        logger.info("Starting account: %s", label)
+        await run_account(settings, ai)
+    except Exception:
+        logger.exception("Account '%s' crashed - other accounts keep running", label)
+
+
+async def main() -> None:
+    base = load_settings()
+    await init_db(base.db_path)
+    ai = AIRouter(base.openrouter_api_key, base.openrouter_model)
+
+    tasks = [
+        run_account_safely(base, ai, "primary"),
+        run_dashboard(base),
+    ]
+    # Additional accounts registered via the dashboard, each fully isolated.
+    for row in await get_active_accounts(base.db_path):
+        acct_settings = build_account_settings(base, row)
+        tasks.append(run_account_safely(acct_settings, ai, f"account#{row['id']} ({row['name']})"))
+
+    logger.info("Starting %d account(s) + dashboard", len(tasks) - 1)
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

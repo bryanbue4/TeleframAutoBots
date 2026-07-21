@@ -97,6 +97,21 @@ CREATE TABLE IF NOT EXISTS investment_plans (
     text TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1
 );
+
+CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    customer_bot_token TEXT NOT NULL,
+    admin_bot_token TEXT NOT NULL,
+    admin_telegram_id INTEGER NOT NULL,
+    telethon_api_id INTEGER,
+    telethon_api_hash TEXT,
+    telethon_session_string TEXT,
+    destination_chat_id INTEGER,
+    source_chats TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -468,6 +483,55 @@ async def list_recent_customers(db_path: str, limit: int = 20) -> list[dict]:
             (limit,),
         )
         return [dict(r) for r in await cursor.fetchall()]
+
+
+async def add_account(db_path: str, account: dict) -> int:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO accounts
+              (name, customer_bot_token, admin_bot_token, admin_telegram_id,
+               telethon_api_id, telethon_api_hash, telethon_session_string,
+               destination_chat_id, source_chats)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                account["name"],
+                account["customer_bot_token"],
+                account["admin_bot_token"],
+                int(account["admin_telegram_id"]),
+                int(account["telethon_api_id"]) if account.get("telethon_api_id") else None,
+                account.get("telethon_api_hash"),
+                account.get("telethon_session_string"),
+                int(account["destination_chat_id"]) if account.get("destination_chat_id") else None,
+                account.get("source_chats"),
+            ),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def list_accounts(db_path: str) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id, name, admin_telegram_id, destination_chat_id, source_chats, active FROM accounts ORDER BY id"
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def get_active_accounts(db_path: str) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM accounts WHERE active = 1 ORDER BY id")
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def remove_account(db_path: str, account_id: int) -> bool:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+        await db.commit()
+        return cursor.rowcount > 0
 
 
 async def set_setting(db_path: str, key: str, value: str) -> None:

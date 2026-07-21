@@ -10,12 +10,15 @@ from aiohttp import web
 from app.config import Settings
 from app.dashboard.mcp import make_mcp_handler
 from app.db import (
+    add_account,
     add_plan,
     add_question,
     add_route,
     add_team_member,
     add_trusted_device,
     build_daily_report,
+    list_accounts,
+    remove_account,
     end_relay,
     get_setting,
     is_trusted_device,
@@ -141,7 +144,7 @@ def _post_button(action: str, field: str, value, label: str, css: str) -> str:
     )
 
 
-def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, channels, plans, scope) -> str:
+def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, channels, plans, scope, accounts) -> str:
     route_items = [
         {"id": r["id"], "source": r["source_chat"], "destination": r["destination_chat"],
          "_action": _del_form("/delete", "id", r["id"])}
@@ -185,6 +188,12 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
     channel_items = [
         {"title": ch["title"] or "-", "id": ch["chat_id"], "type": ch["chat_type"], "_action": ""}
         for ch in channels
+    ]
+    account_items = [
+        {"id": a["id"], "name": a["name"], "admin": a["admin_telegram_id"],
+         "destination": a["destination_chat_id"] or "-",
+         "_action": _del_form("/delaccount", "id", a["id"])}
+        for a in accounts
     ]
 
     return _shell(
@@ -257,7 +266,26 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
     <table><tr><th>ID</th><th>Name</th><th>Msgs</th><th>Handled by</th><th></th></tr>
       {_rows(customer_items, ["id", "name", "msgs", "state"], "No customers yet.")}</table>
     <p class="hint">"Hold AI" pauses the assistant so you can reply from the admin bot with
-      /say &lt;id&gt; &lt;message&gt;. "Release to AI" hands the chat back.</p>""",
+      /say &lt;id&gt; &lt;message&gt;. "Release to AI" hands the chat back.</p>
+
+    <h2>Telegram accounts (multi-account)</h2>
+    <table><tr><th>#</th><th>Name</th><th>Admin ID</th><th>Destination</th><th></th></tr>
+      {_rows(account_items, ["id", "name", "admin", "destination"], "Only the primary account is running.")}</table>
+    <details><summary>+ Add a new account</summary>
+    <form method="post" action="/addaccount" style="margin-top:12px">
+      <p><input type="text" name="name" placeholder="Account name" required></p>
+      <p><input type="text" name="customer_bot_token" placeholder="Customer bot token" required></p>
+      <p><input type="text" name="admin_bot_token" placeholder="Admin bot token" required></p>
+      <p><input type="text" name="admin_telegram_id" placeholder="Your admin Telegram ID" required></p>
+      <p><input type="text" name="telethon_api_id" placeholder="Telethon API ID (optional)"></p>
+      <p><input type="text" name="telethon_api_hash" placeholder="Telethon API hash (optional)"></p>
+      <p><input type="text" name="telethon_session_string" placeholder="Telethon session string (optional)"></p>
+      <p><input type="text" name="destination_chat_id" placeholder="Destination channel id"></p>
+      <p><input type="text" name="source_chats" placeholder="Source channels, comma-separated"></p>
+      <button>Add account</button>
+    </form></details>
+    <p class="hint">New accounts start on the next redeploy (Railway restarts automatically after a
+      variable change, or use the Deployments tab to redeploy). Each account runs fully isolated.</p>""",
     )
 
 
@@ -350,6 +378,7 @@ def build_dashboard_app(settings: Settings) -> web.Application:
                 await list_detected_channels(settings.db_path),
                 await list_plans(settings.db_path),
                 await get_setting(settings.db_path, "business_scope", ""),
+                await list_accounts(settings.db_path),
             ),
             content_type="text/html",
         )
@@ -454,6 +483,27 @@ def build_dashboard_app(settings: Settings) -> web.Application:
         await set_setting(settings.db_path, "business_scope", (data.get("scope") or "").strip())
         raise web.HTTPFound("/")
 
+    async def addaccount(request):
+        data = await request.post()
+        required = ("name", "customer_bot_token", "admin_bot_token", "admin_telegram_id")
+        if all((data.get(k) or "").strip() for k in required):
+            try:
+                await add_account(settings.db_path, {k: (data.get(k) or "").strip() for k in (
+                    "name", "customer_bot_token", "admin_bot_token", "admin_telegram_id",
+                    "telethon_api_id", "telethon_api_hash", "telethon_session_string",
+                    "destination_chat_id", "source_chats")})
+            except Exception:
+                logger.exception("Failed to add account")
+        raise web.HTTPFound("/")
+
+    async def delaccount(request):
+        data = await request.post()
+        try:
+            await remove_account(settings.db_path, int(data.get("id")))
+        except (TypeError, ValueError):
+            pass
+        raise web.HTTPFound("/")
+
     app.router.add_get("/login", login_get)
     app.router.add_post("/login", login_post)
     app.router.add_get("/otp", otp_get)
@@ -473,6 +523,8 @@ def build_dashboard_app(settings: Settings) -> web.Application:
     app.router.add_post("/addplan", addplan)
     app.router.add_post("/delplan", delplan)
     app.router.add_post("/setscope", setscope)
+    app.router.add_post("/addaccount", addaccount)
+    app.router.add_post("/delaccount", delaccount)
     # MCP endpoint for controlling the bot from Claude (custom connector).
     mcp_handler = make_mcp_handler(settings)
     app.router.add_route("*", "/mcp/{token}", mcp_handler)
