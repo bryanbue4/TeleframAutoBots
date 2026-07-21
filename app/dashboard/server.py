@@ -7,6 +7,7 @@ import time
 import httpx
 from aiohttp import web
 
+from app.accounts import account_db_path
 from app.config import Settings
 from app.dashboard.mcp import make_mcp_handler
 from app.db import (
@@ -395,7 +396,7 @@ def build_dashboard_app(settings: Settings) -> web.Application:
         except ValueError:
             aid = 0
         if aid > 0:
-            return f"data/acct_{aid}.db", aid, f"/?account={aid}"
+            return account_db_path(settings.db_path, aid), aid, f"/?account={aid}"
         return settings.db_path, 0, "/"
 
     async def index(request):
