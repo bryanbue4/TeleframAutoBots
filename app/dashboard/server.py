@@ -10,6 +10,7 @@ from aiohttp import web
 from app.accounts import account_db_path
 from app.config import Settings
 from app.dashboard.mcp import make_mcp_handler
+from app.dashboard.onboarding import register_onboarding
 from app.db import (
     add_account,
     add_plan,
@@ -296,19 +297,7 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
     <table><tr><th>#</th><th>Name</th><th>Admin ID</th><th>Destination</th><th></th></tr>
       {_rows(account_items, ["id", "name", "admin", "destination"], "Only the primary account is running.")}</table>
     <p class="hint">Click "Manage" to control that account's settings above. New accounts start on the next redeploy.</p>
-    <details><summary>+ Add a new account</summary>
-    <form method="post" action="/addaccount" style="margin-top:12px">
-      <p><input type="text" name="name" placeholder="Account name" required></p>
-      <p><input type="text" name="customer_bot_token" placeholder="Customer bot token" required></p>
-      <p><input type="text" name="admin_bot_token" placeholder="Admin bot token" required></p>
-      <p><input type="text" name="admin_telegram_id" placeholder="Your admin Telegram ID" required></p>
-      <p><input type="text" name="telethon_api_id" placeholder="Telethon API ID (optional)"></p>
-      <p><input type="text" name="telethon_api_hash" placeholder="Telethon API hash (optional)"></p>
-      <p><input type="text" name="telethon_session_string" placeholder="Telethon session string (optional)"></p>
-      <p><input type="text" name="destination_chat_id" placeholder="Destination channel id"></p>
-      <p><input type="text" name="source_chats" placeholder="Source channels, comma-separated"></p>
-      <button>Add account</button>
-    </form></details>""",
+    <p><a href="/newaccount"><button type="button">+ Add a new account (phone + code, no Colab)</button></a></p>""",
     )
 
 
@@ -582,6 +571,8 @@ def build_dashboard_app(settings: Settings) -> web.Application:
     app.router.add_post("/setai", setai)
     app.router.add_post("/addaccount", addaccount)
     app.router.add_post("/delaccount", delaccount)
+    # Guided account onboarding (phone + code, no Colab).
+    register_onboarding(app, settings)
     # MCP endpoint for controlling the bot from Claude (custom connector).
     mcp_handler = make_mcp_handler(settings)
     app.router.add_route("*", "/mcp/{token}", mcp_handler)
