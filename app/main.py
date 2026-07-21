@@ -41,6 +41,7 @@ ADMIN_COMMANDS = [
     BotCommand(command="delplan", description="Remove a plan: /delplan <id>"),
     BotCommand(command="scope", description="Show the business scope"),
     BotCommand(command="setscope", description="Set business scope: /setscope <text>"),
+    BotCommand(command="setai", description="Set custom AI instructions: /setai <text>"),
     BotCommand(command="setup", description="Show setup + how to add a new channel"),
     BotCommand(command="diag", description="Check AI model + connection"),
     BotCommand(command="help", description="Show all commands"),

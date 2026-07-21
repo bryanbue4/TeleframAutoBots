@@ -413,6 +413,21 @@ def build_admin_dispatcher(settings: Settings, ai: AIRouter, customer_bot: Bot) 
         scope = await get_setting(settings.db_path, "business_scope", "")
         await message.answer(f"Current scope: {scope}" if scope else "No scope set. Use /setscope <text>.")
 
+    @dp.message(Command("setai"))
+    async def on_setai(message: Message) -> None:
+        if not is_owner(message):
+            return
+        text = _text_after_command(message)
+        if not text:
+            current = await get_setting(settings.db_path, "ai_instructions", "")
+            await message.answer(
+                f"Current AI instructions: {current}\n\nTo change: /setai <instructions>"
+                if current else "Usage: /setai <custom instructions for the assistant>"
+            )
+            return
+        await set_setting(settings.db_path, "ai_instructions", text)
+        await message.answer("AI instructions updated.")
+
     @dp.message(Command("setup"))
     async def on_setup(message: Message) -> None:
         if not is_owner(message):

@@ -21,6 +21,7 @@ from app.db import (
     remove_account,
     end_relay,
     get_setting,
+    init_db,
     is_trusted_device,
     list_active_relays,
     list_detected_channels,
@@ -127,15 +128,16 @@ def _rows(items, cols, empty):
     return out
 
 
-def _del_form(action: str, field: str, value) -> str:
+def _del_form(action: str, field: str, value, q: str = "") -> str:
     return (
-        f'<form method="post" action="{action}" onsubmit="return confirm(\'Delete?\')">'
+        f'<form method="post" action="{action}{q}" onsubmit="return confirm(\'Delete?\')">'
         f'<input type="hidden" name="{field}" value="{html.escape(str(value))}">'
         f'<button class="del">Delete</button></form>'
     )
 
 
-def _post_button(action: str, field: str, value, label: str, css: str) -> str:
+def _post_button(action: str, field: str, value, label: str, css: str, q: str = "") -> str:
+    action = action + q
     cls = f' class="{css}"' if css else ""
     return (
         f'<form method="post" action="{action}">'
@@ -144,41 +146,43 @@ def _post_button(action: str, field: str, value, label: str, css: str) -> str:
     )
 
 
-def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, channels, plans, scope, accounts) -> str:
+def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, channels, plans,
+                    scope, accounts, current_account, instructions) -> str:
+    q = f"?account={current_account}" if current_account else ""
     route_items = [
         {"id": r["id"], "source": r["source_chat"], "destination": r["destination_chat"],
-         "_action": _del_form("/delete", "id", r["id"])}
+         "_action": _del_form("/delete", "id", r["id"], q)}
         for r in routes
     ]
     question_items = [
-        {"id": q["id"], "question": q["question"], "_action": _del_form("/delq", "id", q["id"])}
-        for q in questions
+        {"id": qq["id"], "question": qq["question"], "_action": _del_form("/delq", "id", qq["id"], q)}
+        for qq in questions
     ]
     plan_items = [
-        {"id": p["id"], "plan": p["text"], "_action": _del_form("/delplan", "id", p["id"])}
+        {"id": p["id"], "plan": p["text"], "_action": _del_form("/delplan", "id", p["id"], q)}
         for p in plans
     ]
     team_items = [
         {"telegram_id": m["telegram_id"], "name": m["name"],
-         "_action": _del_form("/delteam", "id", m["telegram_id"])}
+         "_action": _del_form("/delteam", "id", m["telegram_id"], q)}
         for m in team
     ]
     relay_items = [
         {"customer_id": rl["customer_id"], "team_member_id": rl["team_member_id"],
-         "_action": _del_form("/endrelay", "id", rl["customer_id"])}
+         "_action": _del_form("/endrelay", "id", rl["customer_id"], q)}
         for rl in relays
     ]
     flagged_items = [
         {"id": f["telegram_user_id"], "name": f["name"] or "-",
          "reason": (f["suspicious_reasons"] or "").strip(" ;"),
-         "_action": _del_form("/removemember", "id", f["telegram_user_id"])}
+         "_action": _del_form("/removemember", "id", f["telegram_user_id"], q)}
         for f in flagged
     ]
 
     def _customer_action(c):
         if c["handler"] is not None:
-            return _post_button("/release", "id", c["telegram_user_id"], "Release to AI", "")
-        return _post_button("/take", "id", c["telegram_user_id"], "Hold AI (take over)", "")
+            return _post_button("/release", "id", c["telegram_user_id"], "Release to AI", "", q)
+        return _post_button("/take", "id", c["telegram_user_id"], "Hold AI (take over)", "", q)
 
     customer_items = [
         {"id": c["telegram_user_id"], "name": c["name"] or "-", "msgs": c["message_count"],
@@ -192,14 +196,27 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
     account_items = [
         {"id": a["id"], "name": a["name"], "admin": a["admin_telegram_id"],
          "destination": a["destination_chat_id"] or "-",
-         "_action": _del_form("/delaccount", "id", a["id"])}
+         "_action": (f'<a href="/?account={a["id"]}">Manage</a> ' + _del_form("/delaccount", "id", a["id"]))}
         for a in accounts
     ]
+
+    def _switch(label, aid):
+        cur = (aid == current_account)
+        href = "/" if aid == 0 else f"/?account={aid}"
+        style = ' style="font-weight:bold;text-decoration:underline"' if cur else ""
+        return f'<a href="{href}"{style}>{html.escape(label)}</a>'
+
+    switcher = "Managing: " + " · ".join(
+        [_switch("Primary", 0)] + [_switch(a["name"], a["id"]) for a in accounts]
+    )
+    banner = "Primary account" if not current_account else f"Account #{current_account}"
 
     return _shell(
         "Dashboard",
         f"""<h1>TeleframAutoBots Dashboard</h1>
     <p style="text-align:right"><a href="/logout">Log out</a></p>
+    <p class="hint">{switcher}</p>
+    <p style="color:#60a5fa"><b>▸ {banner}</b> — settings below apply to this account.</p>
 
     <h2>Today ({html.escape(stats['date'])})</h2>
     <div class="stats">
@@ -212,22 +229,29 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
     </div>
 
     <h2>Business scope (what the AI keeps customers focused on)</h2>
-    <form class="inline" method="post" action="/setscope">
+    <form class="inline" method="post" action="/setscope{q}">
       <input type="text" name="scope" placeholder="e.g. We offer crypto investment plans with monthly returns"
         value="{html.escape(scope)}">
       <button>Save scope</button></form>
 
+    <h2>AI instructions (custom rules the assistant follows in every chat)</h2>
+    <form class="inline" method="post" action="/setai{q}">
+      <input type="text" name="instructions"
+        placeholder="e.g. Be formal, always mention 24/7 support, never discuss competitors"
+        value="{html.escape(instructions)}">
+      <button>Save instructions</button></form>
+
     <h2>Investment plans (the AI offers these to customers)</h2>
     <table><tr><th>#</th><th>Plan</th><th></th></tr>
       {_rows(plan_items, ["id", "plan"], "No plans yet.")}</table>
-    <form class="inline" method="post" action="/addplan">
+    <form class="inline" method="post" action="/addplan{q}">
       <input type="text" name="text" placeholder="e.g. Starter: invest $100, 5% monthly for 6 months" required>
       <button>Add plan</button></form>
 
     <h2>Content routes</h2>
     <table><tr><th>#</th><th>Source</th><th>Destination</th><th></th></tr>
       {_rows(route_items, ["id", "source", "destination"], "No routes yet.")}</table>
-    <form class="inline" method="post" action="/add">
+    <form class="inline" method="post" action="/add{q}">
       <input type="text" name="source" placeholder="Source @channel" required>
       <input type="text" name="destination" placeholder="Destination id/@channel" required>
       <button>Add route</button></form>
@@ -240,14 +264,14 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
     <h2>Intake questions (woven into chats)</h2>
     <table><tr><th>#</th><th>Question</th><th></th></tr>
       {_rows(question_items, ["id", "question"], "No questions yet.")}</table>
-    <form class="inline" method="post" action="/addq">
+    <form class="inline" method="post" action="/addq{q}">
       <input type="text" name="question" placeholder="e.g. What product are you interested in?" required>
       <button>Add question</button></form>
 
     <h2>Team members</h2>
     <table><tr><th>Telegram ID</th><th>Name</th><th></th></tr>
       {_rows(team_items, ["telegram_id", "name"], "No team members yet.")}</table>
-    <form class="inline" method="post" action="/addteam">
+    <form class="inline" method="post" action="/addteam{q}">
       <input type="text" name="telegram_id" placeholder="Telegram ID" required>
       <input type="text" name="name" placeholder="Name" required>
       <button>Add member</button></form>
@@ -255,8 +279,7 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
     <h2>Active handoffs</h2>
     <table><tr><th>Customer</th><th>Team member</th><th></th></tr>
       {_rows(relay_items, ["customer_id", "team_member_id"], "No active handoffs.")}</table>
-    <p class="hint">Start a handoff from the admin bot: /assign &lt;customer_id&gt; &lt;team_id&gt;.
-      Changes apply within ~30 seconds.</p>
+    <p class="hint">Start a handoff from the admin bot: /assign &lt;customer_id&gt; &lt;team_id&gt;.</p>
 
     <h2>⚠️ Flagged members (spam / abuse)</h2>
     <table><tr><th>ID</th><th>Name</th><th>Reason</th><th></th></tr>
@@ -271,6 +294,7 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
     <h2>Telegram accounts (multi-account)</h2>
     <table><tr><th>#</th><th>Name</th><th>Admin ID</th><th>Destination</th><th></th></tr>
       {_rows(account_items, ["id", "name", "admin", "destination"], "Only the primary account is running.")}</table>
+    <p class="hint">Click "Manage" to control that account's settings above. New accounts start on the next redeploy.</p>
     <details><summary>+ Add a new account</summary>
     <form method="post" action="/addaccount" style="margin-top:12px">
       <p><input type="text" name="name" placeholder="Account name" required></p>
@@ -283,9 +307,7 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
       <p><input type="text" name="destination_chat_id" placeholder="Destination channel id"></p>
       <p><input type="text" name="source_chats" placeholder="Source channels, comma-separated"></p>
       <button>Add account</button>
-    </form></details>
-    <p class="hint">New accounts start on the next redeploy (Railway restarts automatically after a
-      variable change, or use the Deployments tab to redeploy). Each account runs fully isolated.</p>""",
+    </form></details>""",
     )
 
 
@@ -365,123 +387,156 @@ def build_dashboard_app(settings: Settings) -> web.Application:
         resp.del_cookie("sid")
         return resp
 
-    async def index(_):
+    def ctx(request):
+        """Resolve which account's database this request targets (query ?account=id).
+        Returns (db_path, account_id, redirect_target)."""
+        try:
+            aid = int(request.query.get("account") or 0)
+        except ValueError:
+            aid = 0
+        if aid > 0:
+            return f"data/acct_{aid}.db", aid, f"/?account={aid}"
+        return settings.db_path, 0, "/"
+
+    async def index(request):
+        db, acc, _ = ctx(request)
+        await init_db(db)  # ensure schema exists even if this account hasn't started yet
         return web.Response(
             text=_dashboard_page(
-                await build_daily_report(settings.db_path),
-                await list_routes(settings.db_path),
-                await list_questions(settings.db_path),
-                await list_team_members(settings.db_path),
-                await list_active_relays(settings.db_path),
-                await list_flagged_members(settings.db_path),
-                await list_recent_customers(settings.db_path),
-                await list_detected_channels(settings.db_path),
-                await list_plans(settings.db_path),
-                await get_setting(settings.db_path, "business_scope", ""),
+                await build_daily_report(db),
+                await list_routes(db),
+                await list_questions(db),
+                await list_team_members(db),
+                await list_active_relays(db),
+                await list_flagged_members(db),
+                await list_recent_customers(db),
+                await list_detected_channels(db),
+                await list_plans(db),
+                await get_setting(db, "business_scope", ""),
                 await list_accounts(settings.db_path),
+                acc,
+                await get_setting(db, "ai_instructions", ""),
             ),
             content_type="text/html",
         )
 
     async def add(request):
+        db, _, target = ctx(request)
         data = await request.post()
         source, dest = (data.get("source") or "").strip(), (data.get("destination") or "").strip()
         if source and dest:
-            await add_route(settings.db_path, source, dest)
-        raise web.HTTPFound("/")
+            await add_route(db, source, dest)
+        raise web.HTTPFound(target)
 
     async def delete(request):
+        db, _, target = ctx(request)
         data = await request.post()
         try:
-            await remove_route(settings.db_path, int(data.get("id")))
+            await remove_route(db, int(data.get("id")))
         except (TypeError, ValueError):
             pass
-        raise web.HTTPFound("/")
+        raise web.HTTPFound(target)
 
     async def addq(request):
+        db, _, target = ctx(request)
         data = await request.post()
-        q = (data.get("question") or "").strip()
-        if q:
-            await add_question(settings.db_path, q)
-        raise web.HTTPFound("/")
+        text = (data.get("question") or "").strip()
+        if text:
+            await add_question(db, text)
+        raise web.HTTPFound(target)
 
     async def delq(request):
+        db, _, target = ctx(request)
         data = await request.post()
         try:
-            await remove_question(settings.db_path, int(data.get("id")))
+            await remove_question(db, int(data.get("id")))
         except (TypeError, ValueError):
             pass
-        raise web.HTTPFound("/")
+        raise web.HTTPFound(target)
 
     async def addteam(request):
+        db, _, target = ctx(request)
         data = await request.post()
         try:
             team_id = int((data.get("telegram_id") or "").strip())
         except ValueError:
-            raise web.HTTPFound("/")
-        name = (data.get("name") or "").strip()
-        await add_team_member(settings.db_path, team_id, name)
-        raise web.HTTPFound("/")
+            raise web.HTTPFound(target)
+        await add_team_member(db, team_id, (data.get("name") or "").strip())
+        raise web.HTTPFound(target)
 
     async def delteam(request):
+        db, _, target = ctx(request)
         data = await request.post()
         try:
-            await remove_team_member(settings.db_path, int(data.get("id")))
+            await remove_team_member(db, int(data.get("id")))
         except (TypeError, ValueError):
             pass
-        raise web.HTTPFound("/")
+        raise web.HTTPFound(target)
 
     async def endrelay_route(request):
+        db, _, target = ctx(request)
         data = await request.post()
         try:
-            await end_relay(settings.db_path, int(data.get("id")))
+            await end_relay(db, int(data.get("id")))
         except (TypeError, ValueError):
             pass
-        raise web.HTTPFound("/")
+        raise web.HTTPFound(target)
 
     async def take(request):
+        db, _, target = ctx(request)
         data = await request.post()
         try:
-            await start_relay(settings.db_path, int(data.get("id")), settings.admin_telegram_id)
+            await start_relay(db, int(data.get("id")), settings.admin_telegram_id)
         except (TypeError, ValueError):
             pass
-        raise web.HTTPFound("/")
+        raise web.HTTPFound(target)
 
     async def release(request):
+        db, _, target = ctx(request)
         data = await request.post()
         try:
-            await end_relay(settings.db_path, int(data.get("id")))
+            await end_relay(db, int(data.get("id")))
         except (TypeError, ValueError):
             pass
-        raise web.HTTPFound("/")
+        raise web.HTTPFound(target)
 
     async def removemember(request):
+        db, _, target = ctx(request)
         data = await request.post()
         try:
-            await set_customer_status(settings.db_path, int(data.get("id")), "removed", reason="dashboard")
+            await set_customer_status(db, int(data.get("id")), "removed", reason="dashboard")
         except (TypeError, ValueError):
             pass
-        raise web.HTTPFound("/")
+        raise web.HTTPFound(target)
 
     async def addplan(request):
+        db, _, target = ctx(request)
         data = await request.post()
         text = (data.get("text") or "").strip()
         if text:
-            await add_plan(settings.db_path, text)
-        raise web.HTTPFound("/")
+            await add_plan(db, text)
+        raise web.HTTPFound(target)
 
     async def delplan(request):
+        db, _, target = ctx(request)
         data = await request.post()
         try:
-            await remove_plan(settings.db_path, int(data.get("id")))
+            await remove_plan(db, int(data.get("id")))
         except (TypeError, ValueError):
             pass
-        raise web.HTTPFound("/")
+        raise web.HTTPFound(target)
 
     async def setscope(request):
+        db, _, target = ctx(request)
         data = await request.post()
-        await set_setting(settings.db_path, "business_scope", (data.get("scope") or "").strip())
-        raise web.HTTPFound("/")
+        await set_setting(db, "business_scope", (data.get("scope") or "").strip())
+        raise web.HTTPFound(target)
+
+    async def setai(request):
+        db, _, target = ctx(request)
+        data = await request.post()
+        await set_setting(db, "ai_instructions", (data.get("instructions") or "").strip())
+        raise web.HTTPFound(target)
 
     async def addaccount(request):
         data = await request.post()
@@ -523,6 +578,7 @@ def build_dashboard_app(settings: Settings) -> web.Application:
     app.router.add_post("/addplan", addplan)
     app.router.add_post("/delplan", delplan)
     app.router.add_post("/setscope", setscope)
+    app.router.add_post("/setai", setai)
     app.router.add_post("/addaccount", addaccount)
     app.router.add_post("/delaccount", delaccount)
     # MCP endpoint for controlling the bot from Claude (custom connector).

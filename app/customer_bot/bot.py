@@ -48,8 +48,9 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
             questions = await get_active_questions(settings.db_path)
             plans = await get_active_plans(settings.db_path)
             scope = await get_setting(settings.db_path, "business_scope", "")
+            instructions = await get_setting(settings.db_path, "ai_instructions", "")
             return await ai.reply_as_customer_assistant(
-                user_text, questions=questions, plans=plans, scope=scope
+                user_text, questions=questions, plans=plans, scope=scope, instructions=instructions
             )
         except Exception:
             logger.exception("AI reply failed - sending fallback")

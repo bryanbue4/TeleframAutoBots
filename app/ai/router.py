@@ -52,6 +52,7 @@ class AIRouter:
         questions: list[str] | None = None,
         plans: list[str] | None = None,
         scope: str = "",
+        instructions: str = "",
     ) -> str:
         business = scope.strip() or "an investment service"
         system = (
@@ -75,6 +76,8 @@ class AIRouter:
                 "\n\nAlso, over the course of the conversation, naturally collect answers "
                 f"to these questions (one at a time, only when it fits): {joined}."
             )
+        if instructions.strip():
+            system += f"\n\nAdditional instructions from the business owner (follow these): {instructions.strip()}"
         messages = [
             {"role": "system", "content": system},
             *(history or []),
