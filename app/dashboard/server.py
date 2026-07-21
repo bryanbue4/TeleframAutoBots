@@ -10,24 +10,29 @@ from aiohttp import web
 from app.config import Settings
 from app.dashboard.mcp import make_mcp_handler
 from app.db import (
+    add_plan,
     add_question,
     add_route,
     add_team_member,
     add_trusted_device,
     build_daily_report,
     end_relay,
+    get_setting,
     is_trusted_device,
     list_active_relays,
     list_detected_channels,
     list_flagged_members,
+    list_plans,
     list_questions,
     list_recent_customers,
     list_routes,
     list_team_members,
+    remove_plan,
     remove_question,
     remove_route,
     remove_team_member,
     set_customer_status,
+    set_setting,
     start_relay,
 )
 
@@ -136,7 +141,7 @@ def _post_button(action: str, field: str, value, label: str, css: str) -> str:
     )
 
 
-def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, channels) -> str:
+def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, channels, plans, scope) -> str:
     route_items = [
         {"id": r["id"], "source": r["source_chat"], "destination": r["destination_chat"],
          "_action": _del_form("/delete", "id", r["id"])}
@@ -145,6 +150,10 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
     question_items = [
         {"id": q["id"], "question": q["question"], "_action": _del_form("/delq", "id", q["id"])}
         for q in questions
+    ]
+    plan_items = [
+        {"id": p["id"], "plan": p["text"], "_action": _del_form("/delplan", "id", p["id"])}
+        for p in plans
     ]
     team_items = [
         {"telegram_id": m["telegram_id"], "name": m["name"],
@@ -192,6 +201,19 @@ def _dashboard_page(stats, routes, questions, team, relays, flagged, customers, 
       <div class="stat"><b>{stats['old_user_messages']}</b><span>Old msgs</span></div>
       <div class="stat"><b>{stats['active_chats']}</b><span>Active chats</span></div>
     </div>
+
+    <h2>Business scope (what the AI keeps customers focused on)</h2>
+    <form class="inline" method="post" action="/setscope">
+      <input type="text" name="scope" placeholder="e.g. We offer crypto investment plans with monthly returns"
+        value="{html.escape(scope)}">
+      <button>Save scope</button></form>
+
+    <h2>Investment plans (the AI offers these to customers)</h2>
+    <table><tr><th>#</th><th>Plan</th><th></th></tr>
+      {_rows(plan_items, ["id", "plan"], "No plans yet.")}</table>
+    <form class="inline" method="post" action="/addplan">
+      <input type="text" name="text" placeholder="e.g. Starter: invest $100, 5% monthly for 6 months" required>
+      <button>Add plan</button></form>
 
     <h2>Content routes</h2>
     <table><tr><th>#</th><th>Source</th><th>Destination</th><th></th></tr>
@@ -326,6 +348,8 @@ def build_dashboard_app(settings: Settings) -> web.Application:
                 await list_flagged_members(settings.db_path),
                 await list_recent_customers(settings.db_path),
                 await list_detected_channels(settings.db_path),
+                await list_plans(settings.db_path),
+                await get_setting(settings.db_path, "business_scope", ""),
             ),
             content_type="text/html",
         )
@@ -410,6 +434,26 @@ def build_dashboard_app(settings: Settings) -> web.Application:
             pass
         raise web.HTTPFound("/")
 
+    async def addplan(request):
+        data = await request.post()
+        text = (data.get("text") or "").strip()
+        if text:
+            await add_plan(settings.db_path, text)
+        raise web.HTTPFound("/")
+
+    async def delplan(request):
+        data = await request.post()
+        try:
+            await remove_plan(settings.db_path, int(data.get("id")))
+        except (TypeError, ValueError):
+            pass
+        raise web.HTTPFound("/")
+
+    async def setscope(request):
+        data = await request.post()
+        await set_setting(settings.db_path, "business_scope", (data.get("scope") or "").strip())
+        raise web.HTTPFound("/")
+
     app.router.add_get("/login", login_get)
     app.router.add_post("/login", login_post)
     app.router.add_get("/otp", otp_get)
@@ -426,6 +470,9 @@ def build_dashboard_app(settings: Settings) -> web.Application:
     app.router.add_post("/take", take)
     app.router.add_post("/release", release)
     app.router.add_post("/removemember", removemember)
+    app.router.add_post("/addplan", addplan)
+    app.router.add_post("/delplan", delplan)
+    app.router.add_post("/setscope", setscope)
     # MCP endpoint for controlling the bot from Claude (custom connector).
     mcp_handler = make_mcp_handler(settings)
     app.router.add_route("*", "/mcp/{token}", mcp_handler)

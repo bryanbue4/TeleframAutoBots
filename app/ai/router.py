@@ -50,19 +50,30 @@ class AIRouter:
         user_message: str,
         history: list[dict] | None = None,
         questions: list[str] | None = None,
+        plans: list[str] | None = None,
+        scope: str = "",
     ) -> str:
+        business = scope.strip() or "an investment service"
         system = (
-            "You are a friendly customer assistant for a private Telegram community. "
-            "Greet new members warmly, answer questions helpfully and briefly, and "
-            "naturally ask for the member's name and city if not already known. Keep "
-            "replies short and conversational."
+            f"You are the AI onboarding assistant for {business}. Your goal is to guide "
+            "each customer from first contact through signing up: warmly greet them, "
+            "understand what they're looking for, explain the available investment plans, "
+            "help them choose one, and collect the details needed to sign them up "
+            "(their name, city, a contact number, the plan they want, and how much they "
+            "plan to invest). Move one step at a time and keep replies short and clear. "
+            "Stay strictly within the scope of our investment services - if the customer "
+            "asks about something unrelated, politely steer the conversation back to "
+            "helping them invest. Never invent plans or promise returns beyond what is "
+            "listed below."
         )
+        if plans:
+            listed = "\n".join(f"- {p}" for p in plans)
+            system += f"\n\nAvailable investment plans (only offer these):\n{listed}"
         if questions:
             joined = "; ".join(questions)
             system += (
-                " Over the course of the conversation, naturally and gradually try to "
-                f"learn the answers to these questions: {joined}. Ask at most one at a "
-                "time, only when it fits the flow - never fire them all at once."
+                "\n\nAlso, over the course of the conversation, naturally collect answers "
+                f"to these questions (one at a time, only when it fits): {joined}."
             )
         messages = [
             {"role": "system", "content": system},

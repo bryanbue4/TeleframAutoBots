@@ -11,7 +11,9 @@ from app.db import (
     find_duplicate,
     flag_duplicate,
     flag_suspicious,
+    get_active_plans,
     get_active_questions,
+    get_setting,
     record_message,
     relay_seconds_since_handler,
     save_chat_message,
@@ -41,9 +43,14 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
         except Exception:
             logger.exception("Failed to notify admin")
 
-    async def ai_reply(user_text: str, questions: list[str] | None = None) -> str:
+    async def ai_reply(user_text: str) -> str:
         try:
-            return await ai.reply_as_customer_assistant(user_text, questions=questions)
+            questions = await get_active_questions(settings.db_path)
+            plans = await get_active_plans(settings.db_path)
+            scope = await get_setting(settings.db_path, "business_scope", "")
+            return await ai.reply_as_customer_assistant(
+                user_text, questions=questions, plans=plans, scope=scope
+            )
         except Exception:
             logger.exception("AI reply failed - sending fallback")
             return FALLBACK_REPLY
@@ -150,8 +157,7 @@ def build_customer_dispatcher(settings: Settings, ai: AIRouter, bot: Bot, admin_
             await message.answer(reply)
             return
 
-        questions = await get_active_questions(settings.db_path)
-        reply = await ai_reply(text, questions)
+        reply = await ai_reply(text)
         await save_chat_message(settings.db_path, user.id, "out", reply)
         await message.answer(reply)
 

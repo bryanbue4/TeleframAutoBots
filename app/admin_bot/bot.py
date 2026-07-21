@@ -8,6 +8,7 @@ from aiogram.types import Message
 from app.ai.router import AIRouter
 from app.config import Settings
 from app.db import (
+    add_plan,
     add_question,
     add_route,
     add_team_member,
@@ -16,14 +17,18 @@ from app.db import (
     end_relay,
     get_chat_history,
     get_relay,
+    get_setting,
+    list_plans,
     list_questions,
     list_routes,
     list_team_members,
+    remove_plan,
     remove_question,
     remove_route,
     remove_team_member,
     save_chat_message,
     set_customer_status,
+    set_setting,
     start_relay,
     touch_relay,
 )
@@ -350,6 +355,63 @@ def build_admin_dispatcher(settings: Settings, ai: AIRouter, customer_bot: Bot) 
         except Exception:
             logger.exception("Report AI summary failed - sending raw stats")
             await message.answer(raw)
+
+    # ----- investment plans + business scope -----
+
+    @dp.message(Command("addplan"))
+    async def on_addplan(message: Message) -> None:
+        if not is_owner(message):
+            return
+        text = _text_after_command(message)
+        if not text:
+            await message.answer("Usage: /addplan <plan description>\nExample: /addplan Starter: invest $100, 5% monthly for 6 months")
+            return
+        await add_plan(settings.db_path, text)
+        await message.answer("Plan added. The assistant will offer it to customers.")
+
+    @dp.message(Command("plans"))
+    async def on_plans(message: Message) -> None:
+        if not is_owner(message):
+            return
+        plans = await list_plans(settings.db_path)
+        if not plans:
+            await message.answer("No plans yet. Add one with /addplan <description>.")
+            return
+        lines = ["Investment plans:"] + [f"#{p['id']}: {p['text']}" for p in plans]
+        lines.append("\nRemove with /delplan <id>.")
+        await message.answer("\n".join(lines))
+
+    @dp.message(Command("delplan"))
+    async def on_delplan(message: Message) -> None:
+        if not is_owner(message):
+            return
+        pid = _parse_id(message)
+        if pid is None:
+            await message.answer("Usage: /delplan <id>")
+            return
+        removed = await remove_plan(settings.db_path, pid)
+        await message.answer(f"Removed plan #{pid}." if removed else f"No plan #{pid}.")
+
+    @dp.message(Command("setscope"))
+    async def on_setscope(message: Message) -> None:
+        if not is_owner(message):
+            return
+        text = _text_after_command(message)
+        if not text:
+            await message.answer(
+                "Usage: /setscope <what your business does>\n"
+                "Example: /setscope We offer crypto investment plans with monthly returns"
+            )
+            return
+        await set_setting(settings.db_path, "business_scope", text)
+        await message.answer("Business scope updated. The assistant will stay within it.")
+
+    @dp.message(Command("scope"))
+    async def on_scope(message: Message) -> None:
+        if not is_owner(message):
+            return
+        scope = await get_setting(settings.db_path, "business_scope", "")
+        await message.answer(f"Current scope: {scope}" if scope else "No scope set. Use /setscope <text>.")
 
     @dp.message(Command("setup"))
     async def on_setup(message: Message) -> None:

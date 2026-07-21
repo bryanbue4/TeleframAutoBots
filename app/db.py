@@ -86,6 +86,17 @@ CREATE TABLE IF NOT EXISTS detected_channels (
     chat_type TEXT,
     seen_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS investment_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1
+);
 """
 
 
@@ -457,6 +468,49 @@ async def list_recent_customers(db_path: str, limit: int = 20) -> list[dict]:
             (limit,),
         )
         return [dict(r) for r in await cursor.fetchall()]
+
+
+async def set_setting(db_path: str, key: str, value: str) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        await db.commit()
+
+
+async def get_setting(db_path: str, key: str, default: str = "") -> str:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+        row = await cursor.fetchone()
+        return row[0] if row and row[0] is not None else default
+
+
+async def add_plan(db_path: str, text: str) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("INSERT INTO investment_plans (text) VALUES (?)", (text,))
+        await db.commit()
+
+
+async def list_plans(db_path: str) -> list[dict]:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT id, text, active FROM investment_plans ORDER BY id")
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def remove_plan(db_path: str, plan_id: int) -> bool:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("DELETE FROM investment_plans WHERE id = ?", (plan_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_active_plans(db_path: str) -> list[str]:
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("SELECT text FROM investment_plans WHERE active = 1 ORDER BY id")
+        return [row[0] for row in await cursor.fetchall()]
 
 
 async def save_detected_channel(db_path: str, chat_id: int, title: str, chat_type: str) -> None:
